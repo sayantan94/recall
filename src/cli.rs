@@ -19,6 +19,7 @@ pub enum Commands {
         shell: String,
     },
     /// Log a command (called by the shell hook)
+    #[command(hide = true)]
     Log {
         #[arg(long)]
         command: String,
@@ -34,6 +35,7 @@ pub enum Commands {
         terminal: Option<String>,
     },
     /// Generate a new session ID
+    #[command(hide = true)]
     SessionId,
     /// Search command history
     Search {

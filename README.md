@@ -3,7 +3,6 @@
 </p>
 
 <p align="center">
-  <strong>Your shell, remembered.</strong><br>
   A CLI, TUI, and web app that records your every terminal activity locally, so you can search, explore, and query it in natural language.
 </p>
 

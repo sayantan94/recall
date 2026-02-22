@@ -17,6 +17,8 @@
 
 A lightweight zsh hook captures every command you run across all terminal instances (iTerm, Terminal.app, IDE terminals etc) along with timestamps, exit codes, working directory, and git context, then stores it in a local SQLite database with full-text search. You query your history through the CLI, a terminal UI, a web-based graph view, or plain nlp questions powered by LLM.
 
+> **Note:** Currently supports **zsh** only. Bash and fish support is planned.
+
 ## What you get
 
 - **Full-text search** with filters for repo, directory, and exit code

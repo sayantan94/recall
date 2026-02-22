@@ -1,0 +1,25 @@
+[package]
+name = "recall"
+version = "0.1.0"
+edition = "2021"
+description = "Automatically record terminal activity and search your work history"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+ratatui = "0.28"
+crossterm = "0.28"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+anyhow = "1"
+colored = "2"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-sdk-bedrockruntime = "1"

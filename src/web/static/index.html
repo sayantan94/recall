@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>recall</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <!-- ─── Navbar ─────────────────────────────────────── -->
+    <nav class="navbar">
+        <div class="nav-inner">
+            <a href="/" class="nav-brand">
+                <svg width="32" height="32" viewBox="0 0 144 144" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="8" y="8" width="128" height="128" rx="20" fill="#161b22" stroke="url(#nav-glow)" stroke-width="3"/>
+                    <polyline points="36,64 56,76 36,88" stroke="url(#nav-glow)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    <line x1="64" y1="76" x2="108" y2="76" stroke="#58a6ff" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+                    <path d="M 88 36 A 32 32 0 1 0 88 120" stroke="url(#nav-glow)" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.4"/>
+                    <polygon points="84,30 92,36 84,42" fill="url(#nav-glow)" opacity="0.4"/>
+                    <defs>
+                        <linearGradient id="nav-glow" x1="0" y1="0" x2="144" y2="144" gradientUnits="userSpaceOnUse">
+                            <stop stop-color="#58a6ff"/>
+                            <stop offset="1" stop-color="#3fb950"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <span class="brand-name">recall</span>
+            </a>
+
+            <div class="nav-search">
+                <div class="search-wrapper">
+                    <svg class="search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none">
+                        <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <input type="text" id="search-input" placeholder="Search commands..." spellcheck="false" autocomplete="off">
+                    <div class="search-shortcut"><kbd>/</kbd></div>
+                </div>
+            </div>
+
+            <div class="nav-tabs">
+                <button class="nav-tab active" data-view="timeline">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <rect x="1" y="2" width="14" height="3" rx="1" fill="currentColor" opacity="0.9"/>
+                        <rect x="1" y="7" width="10" height="3" rx="1" fill="currentColor" opacity="0.5"/>
+                        <rect x="1" y="12" width="12" height="3" rx="1" fill="currentColor" opacity="0.3"/>
+                    </svg>
+                    Timeline
+                </button>
+                <button class="nav-tab" data-view="graph">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <circle cx="4" cy="4" r="2" fill="currentColor"/>
+                        <circle cx="12" cy="4" r="2" fill="currentColor"/>
+                        <circle cx="8" cy="12" r="2" fill="currentColor"/>
+                        <line x1="4" y1="4" x2="12" y2="4" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+                        <line x1="4" y1="4" x2="8" y2="12" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+                        <line x1="12" y1="4" x2="8" y2="12" stroke="currentColor" stroke-width="1" opacity="0.4"/>
+                    </svg>
+                    Graph
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- ─── Main ───────────────────────────────────────── -->
+    <main>
+        <!-- Timeline View -->
+        <section id="view-timeline" class="view active">
+            <div class="stats" id="stats">
+                <div class="stat">
+                    <span class="stat-num" id="stat-sessions">--</span>
+                    <span class="stat-lbl">Sessions</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-num" id="stat-commands">--</span>
+                    <span class="stat-lbl">Commands</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-num green" id="stat-repos">--</span>
+                    <span class="stat-lbl">Repos</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-num red" id="stat-failures">--</span>
+                    <span class="stat-lbl">Failures</span>
+                </div>
+            </div>
+
+            <div id="timeline"></div>
+        </section>
+
+        <!-- Graph View -->
+        <section id="view-graph" class="view">
+            <div class="graph-bar">
+                <button id="btn-reset" class="btn">Reset</button>
+                <span class="muted" id="graph-info"></span>
+            </div>
+            <div class="graph-wrap">
+                <canvas id="graph"></canvas>
+                <div class="graph-legend">
+                    <div class="legend-title">Repo Activity Graph</div>
+                    <div class="legend-item"><span class="legend-dot green"></span> Repo node (size = commands)</div>
+                    <div class="legend-item"><span class="legend-line"></span> Worked on together in same session</div>
+                    <div class="legend-hint">Drag nodes &middot; Hover for details</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Search overlay -->
+        <section id="search-overlay" class="search-overlay hidden">
+            <div class="search-head">
+                <span id="search-count" class="muted"></span>
+                <button class="close-btn" id="search-close">&times;</button>
+            </div>
+            <div id="search-list"></div>
+        </section>
+    </main>
+
+    <!-- ─── Drawer ─────────────────────────────────────── -->
+    <aside id="drawer" class="drawer hidden">
+        <div class="drawer-dim" id="drawer-dim"></div>
+        <div class="drawer-panel">
+            <header class="drawer-hdr">
+                <div>
+                    <h2 id="drawer-title"></h2>
+                    <p id="drawer-meta" class="muted"></p>
+                </div>
+                <button class="close-btn" id="drawer-close">&times;</button>
+            </header>
+            <div class="drawer-body" id="drawer-body"></div>
+        </div>
+    </aside>
+
+    <!-- ─── Graph tooltip ──────────────────────────────── -->
+    <div id="tooltip" class="tip hidden"></div>
+
+    <script src="/graph.js"></script>
+</body>
+</html>

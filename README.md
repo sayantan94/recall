@@ -19,6 +19,14 @@ A lightweight zsh hook captures every command you run across all terminal instan
 
 ## What you get
 
+- **Full-text search** with filters for repo, directory, and exit code
+- **Date browsing** for today or any specific day
+- **Natural language Q&A** powered by LLM
+- **Terminal UI** with timeline, session detail, and search views
+- **Web dashboard** with stats, session timeline, and a force-directed repo graph
+- **Session summaries** with auto-generated tags and intent classification
+- **Privacy controls** with pause/resume and automatic secret filtering
+
 ### Search your history
 
 ```bash

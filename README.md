@@ -14,7 +14,6 @@
   <img src="https://img.shields.io/badge/AWS-Bedrock-FF9900?logo=amazonaws" alt="Bedrock">
 </p>
 
-
 A lightweight zsh hook captures every command you run across all terminal instances (iTerm, Terminal.app, IDE terminals etc) along with timestamps, exit codes, working directory, and git context, then stores it in a local SQLite database with full-text search. You query your history through the CLI, a terminal UI, a web-based graph view, or plain nlp questions powered by LLM.
 
 > **Note:** Currently supports **zsh** only. Bash and fish support is planned.
@@ -97,8 +96,12 @@ recall web --port 8080
 Opens a full dashboard in your browser with:
 - **Stats cards** total sessions, commands, repos, failures at a glance
 - **Timeline view** sessions grouped by day, click to expand command details
-- **Graph view** force-directed graph showing sessions linked by git repos and temporal proximity
+- **Graph view** force-directed graph showing repos and tools as a constellation
 - **Search** press `/` to search commands instantly
+
+<p align="center">
+  <img src="assets/demo.gif" alt="Web dashboard demo" width="800">
+</p>
 
 ![Web dashboard](assets/img_5.png)
 

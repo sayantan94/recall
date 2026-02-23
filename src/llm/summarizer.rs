@@ -44,6 +44,11 @@ pub async fn summarize_session(
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "?".to_string()),
         ));
+
+        if let Some(ref output) = cmd.output {
+            let truncated: String = output.lines().take(10).collect::<Vec<_>>().join("\n");
+            context.push_str(&format!("    output: {}\n", truncated));
+        }
     }
 
     let response = call_claude(config, &context, "Summarize this session.").await?;

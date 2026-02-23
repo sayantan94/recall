@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
             cwd,
             session,
             terminal,
+            output_file,
         }) => {
             capture::log::handle_log(
                 &command,
@@ -37,6 +38,7 @@ async fn main() -> Result<()> {
                 cwd.as_deref(),
                 &session,
                 terminal.as_deref(),
+                output_file.as_deref(),
             )?;
         }
         Some(Commands::SessionId) => handle_session_id(),

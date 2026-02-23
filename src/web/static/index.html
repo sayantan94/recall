@@ -62,6 +62,12 @@
                     </svg>
                     Graph
                 </button>
+                <button class="nav-tab" data-view="repos">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                        <path d="M2 3h5v5H2zM9 3h5v5H9zM2 10h5v4H2zM9 10h5v4H9z" fill="currentColor" opacity="0.7"/>
+                    </svg>
+                    Repos
+                </button>
             </div>
         </div>
     </nav>
@@ -94,19 +100,27 @@
 
         <!-- Graph View -->
         <section id="view-graph" class="view">
-            <div class="graph-bar">
-                <button id="btn-reset" class="btn">Reset</button>
-                <span class="muted" id="graph-info"></span>
-            </div>
             <div class="graph-wrap">
                 <canvas id="graph"></canvas>
-                <div class="graph-legend">
-                    <div class="legend-title">Repo Activity Graph</div>
-                    <div class="legend-item"><span class="legend-dot green"></span> Repo node (size = commands)</div>
-                    <div class="legend-item"><span class="legend-line"></span> Worked on together in same session</div>
-                    <div class="legend-hint">Drag nodes &middot; Hover for details</div>
+                <div id="graph-hud" class="graph-hud hidden"></div>
+            </div>
+        </section>
+
+        <!-- Repos View -->
+        <section id="view-repos" class="view">
+            <div class="repos-bar">
+                <span class="muted" id="repos-info"></span>
+                <div class="repos-sort">
+                    <label class="sort-label">Sort:</label>
+                    <select id="repos-sort-select" class="sort-select">
+                        <option value="commands">Most active</option>
+                        <option value="recent">Most recent</option>
+                        <option value="failures">Most failures</option>
+                        <option value="name">Name</option>
+                    </select>
                 </div>
             </div>
+            <div id="repos-grid" class="repos-grid"></div>
         </section>
 
         <!-- Search overlay -->
@@ -133,9 +147,6 @@
             <div class="drawer-body" id="drawer-body"></div>
         </div>
     </aside>
-
-    <!-- ─── Graph tooltip ──────────────────────────────── -->
-    <div id="tooltip" class="tip hidden"></div>
 
     <script src="/graph.js"></script>
 </body>

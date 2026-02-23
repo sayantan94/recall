@@ -37,6 +37,11 @@ pub async fn answer_question(
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "?".to_string()),
         ));
+
+        if let Some(ref output) = cmd.output {
+            let truncated: String = output.lines().take(20).collect::<Vec<_>>().join("\n");
+            context.push_str(&format!("  output:\n  ```\n  {}\n  ```\n", truncated));
+        }
     }
 
     call_claude(config, &context, question).await

@@ -43,6 +43,16 @@ pub fn initialize_db(conn: &Connection) -> Result<()> {
     )
     .context("Failed to create base tables")?;
 
+    // Migrate: add output column if it doesn't exist
+    let has_output_col: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('commands') WHERE name='output'")?
+        .exists([])?;
+
+    if !has_output_col {
+        conn.execute_batch("ALTER TABLE commands ADD COLUMN output TEXT;")
+            .context("Failed to add output column")?;
+    }
+
     // Create FTS5 tables (these don't support IF NOT EXISTS, so check first)
     let has_commands_fts: bool = conn
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='commands_fts'")?
@@ -52,17 +62,47 @@ pub fn initialize_db(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "
             CREATE VIRTUAL TABLE commands_fts USING fts5(
-                command_text, cwd, git_repo, git_branch,
+                command_text, cwd, git_repo, git_branch, output,
                 content='commands', content_rowid='id'
             );
 
             CREATE TRIGGER commands_ai AFTER INSERT ON commands BEGIN
-                INSERT INTO commands_fts(rowid, command_text, cwd, git_repo, git_branch)
-                VALUES (new.id, new.command_text, new.cwd, new.git_repo, new.git_branch);
+                INSERT INTO commands_fts(rowid, command_text, cwd, git_repo, git_branch, output)
+                VALUES (new.id, new.command_text, new.cwd, new.git_repo, new.git_branch, new.output);
             END;
             ",
         )
         .context("Failed to create commands FTS table")?;
+    } else {
+        // Rebuild FTS to include output column if the existing FTS doesn't have it
+        let fts_has_output: bool = conn
+            .prepare(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='commands_fts' AND sql LIKE '%output%'",
+            )?
+            .exists([])?;
+
+        if !fts_has_output {
+            conn.execute_batch(
+                "
+                DROP TRIGGER IF EXISTS commands_ai;
+                DROP TABLE IF EXISTS commands_fts;
+
+                CREATE VIRTUAL TABLE commands_fts USING fts5(
+                    command_text, cwd, git_repo, git_branch, output,
+                    content='commands', content_rowid='id'
+                );
+
+                CREATE TRIGGER commands_ai AFTER INSERT ON commands BEGIN
+                    INSERT INTO commands_fts(rowid, command_text, cwd, git_repo, git_branch, output)
+                    VALUES (new.id, new.command_text, new.cwd, new.git_repo, new.git_branch, new.output);
+                END;
+
+                INSERT INTO commands_fts(rowid, command_text, cwd, git_repo, git_branch, output)
+                    SELECT id, command_text, cwd, git_repo, git_branch, output FROM commands;
+                ",
+            )
+            .context("Failed to rebuild commands FTS table with output")?;
+        }
     }
 
     let has_summaries_fts: bool = conn

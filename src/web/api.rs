@@ -154,6 +154,7 @@ async fn search(Query(sq): Query<SearchQuery>) -> Result<Json<serde_json::Value>
             "git_repo": r.command.git_repo,
             "git_branch": r.command.git_branch,
             "exit_code": r.command.exit_code,
+            "output": r.command.output,
             "rank": r.rank,
         })
     }).collect();
@@ -217,8 +218,8 @@ async fn get_graph_data() -> Result<Json<serde_json::Value>, StatusCode> {
         }
     }
 
-    // Build nodes
-    let nodes: Vec<serde_json::Value> = repo_commands
+    // Build repo nodes
+    let mut nodes: Vec<serde_json::Value> = repo_commands
         .iter()
         .map(|(name, &cmds)| {
             let sess = repo_sessions.get(name).copied().unwrap_or(0);
@@ -232,6 +233,7 @@ async fn get_graph_data() -> Result<Json<serde_json::Value>, StatusCode> {
             json!({
                 "id": name,
                 "label": name,
+                "type": "repo",
                 "commands": cmds,
                 "sessions": sess,
                 "failures": fails,
@@ -254,16 +256,121 @@ async fn get_graph_data() -> Result<Json<serde_json::Value>, StatusCode> {
         }
     }
 
-    let edges: Vec<serde_json::Value> = edge_map
+    let mut edges: Vec<serde_json::Value> = edge_map
         .iter()
         .map(|((a, b), &count)| {
             json!({
                 "source": a,
                 "target": b,
+                "type": "repo-repo",
                 "shared_sessions": count,
             })
         })
         .collect();
+
+    // ── Tool extraction ──────────────────────────────────
+    // Extract tool names from command_text and build tool nodes + repo-tool edges
+    let known_tools: std::collections::HashSet<&str> = [
+        "git", "cargo", "docker", "npm", "npx", "pnpm", "yarn", "bun", "node", "python",
+        "python3", "pip", "pip3", "make", "cmake", "gcc", "g++", "clang", "rustc", "rustup",
+        "go", "java", "javac", "mvn", "gradle", "ruby", "gem", "bundle", "rails", "php",
+        "composer", "swift", "xcodebuild", "kubectl", "terraform", "ansible", "vagrant",
+        "brew", "apt", "yum", "pacman", "ssh", "scp", "rsync", "curl", "wget", "grep",
+        "find", "sed", "awk", "cat", "less", "vim", "nvim", "nano", "emacs", "code",
+        "tmux", "screen", "htop", "top", "ps", "kill", "systemctl", "journalctl",
+        "tar", "zip", "unzip", "gzip", "ls", "cd", "cp", "mv", "rm", "mkdir", "chmod",
+        "chown", "ln", "echo", "env", "export", "source", "eval", "deno", "tsx", "ts-node",
+        "jest", "pytest", "rspec", "mocha", "vitest", "eslint", "prettier", "tsc",
+        "podman", "nix", "just", "task", "watchexec", "ag", "rg", "fd", "bat", "exa",
+        "jq", "yq", "helm", "skaffold", "minikube", "kind",
+    ].iter().copied().collect();
+
+    // Per-tool stats: (total_commands, failures, sessions_set, repos_set)
+    struct ToolStats {
+        commands: usize,
+        failures: usize,
+        sessions: std::collections::HashSet<String>,
+        repos: std::collections::HashSet<String>,
+    }
+    let mut tool_map: std::collections::HashMap<String, ToolStats> = std::collections::HashMap::new();
+
+    // Also track per-(repo, tool) command counts for edges
+    let mut repo_tool_counts: std::collections::HashMap<(String, String), usize> = std::collections::HashMap::new();
+
+    for session in &sessions {
+        if let Ok(cmds) = queries::get_session_commands(&conn, &session.id) {
+            for cmd in &cmds {
+                let text = &cmd.command_text;
+                // Extract first token, take basename
+                let first_token = text.split_whitespace().next().unwrap_or("");
+                let tool_name = first_token.rsplit('/').next().unwrap_or(first_token);
+
+                if tool_name.is_empty() {
+                    continue;
+                }
+
+                let tool_name = tool_name.to_lowercase();
+
+                let entry = tool_map.entry(tool_name.clone()).or_insert_with(|| ToolStats {
+                    commands: 0,
+                    failures: 0,
+                    sessions: std::collections::HashSet::new(),
+                    repos: std::collections::HashSet::new(),
+                });
+                entry.commands += 1;
+                if cmd.exit_code.is_some_and(|code| code != 0) {
+                    entry.failures += 1;
+                }
+                entry.sessions.insert(session.id.clone());
+
+                if let Some(ref repo) = cmd.git_repo {
+                    let repo_name = repo.rsplit('/').next().unwrap_or(repo).to_string();
+                    entry.repos.insert(repo_name.clone());
+                    *repo_tool_counts.entry((repo_name, tool_name.clone())).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Filter tools: known tools with ≥3 uses, or unknown tools with ≥5 uses
+    let filtered_tools: Vec<(&String, &ToolStats)> = tool_map.iter()
+        .filter(|(name, stats)| {
+            if known_tools.contains(name.as_str()) {
+                stats.commands >= 3
+            } else {
+                stats.commands >= 5
+            }
+        })
+        .collect();
+
+    // Add tool nodes
+    for (name, stats) in &filtered_tools {
+        let repos_list: Vec<String> = stats.repos.iter().cloned().collect();
+        let tool_id = format!("tool:{}", name);
+        nodes.push(json!({
+            "id": tool_id,
+            "label": name,
+            "type": "tool",
+            "commands": stats.commands,
+            "failures": stats.failures,
+            "sessions": stats.sessions.len(),
+            "repos": repos_list,
+        }));
+    }
+
+    // Add repo-tool edges
+    for ((repo_name, tool_name), &count) in &repo_tool_counts {
+        // Only add edge if the tool passed the filter
+        let tool_id = format!("tool:{}", tool_name);
+        if filtered_tools.iter().any(|(name, _)| **name == *tool_name) {
+            edges.push(json!({
+                "source": repo_name,
+                "target": tool_id,
+                "type": "repo-tool",
+                "weight": count,
+            }));
+        }
+    }
 
     Ok(Json(json!({
         "nodes": nodes,

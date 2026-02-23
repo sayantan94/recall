@@ -13,8 +13,8 @@ pub fn insert_session(conn: &Connection, session: &Session) -> Result<()> {
 
 pub fn insert_command(conn: &Connection, cmd: &Command) -> Result<i64> {
     conn.execute(
-        "INSERT INTO commands (session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO commands (session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code, output)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             cmd.session_id,
             cmd.command_text,
@@ -24,6 +24,7 @@ pub fn insert_command(conn: &Connection, cmd: &Command) -> Result<i64> {
             cmd.git_repo,
             cmd.git_branch,
             cmd.exit_code,
+            cmd.output,
         ],
     )
     .context("Failed to insert command")?;
@@ -31,9 +32,13 @@ pub fn insert_command(conn: &Connection, cmd: &Command) -> Result<i64> {
 }
 
 pub fn search_commands(conn: &Connection, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
+    // Wrap in double quotes so FTS5 treats special chars (-, /, .) as literals
+    // instead of operators (e.g. "msp-cli" won't become "msp NOT cli")
+    let escaped = format!("\"{}\"", query.replace('"', "\"\""));
+
     let mut stmt = conn.prepare(
         "SELECT c.id, c.session_id, c.command_text, c.timestamp, c.duration_ms, c.cwd,
-                c.git_repo, c.git_branch, c.exit_code, rank
+                c.git_repo, c.git_branch, c.exit_code, c.output, rank
          FROM commands_fts f
          JOIN commands c ON c.id = f.rowid
          WHERE commands_fts MATCH ?1
@@ -42,7 +47,7 @@ pub fn search_commands(conn: &Connection, query: &str, limit: usize) -> Result<V
     )?;
 
     let results = stmt
-        .query_map(params![query, limit as i64], |row| {
+        .query_map(params![escaped, limit as i64], |row| {
             Ok(SearchResult {
                 command: Command {
                     id: Some(row.get(0)?),
@@ -54,8 +59,9 @@ pub fn search_commands(conn: &Connection, query: &str, limit: usize) -> Result<V
                     git_repo: row.get(6)?,
                     git_branch: row.get(7)?,
                     exit_code: row.get(8)?,
+                    output: row.get(9)?,
                 },
-                rank: row.get(9)?,
+                rank: row.get(10)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -69,6 +75,8 @@ pub fn search_summaries(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SummarySearchResult>> {
+    let escaped = format!("\"{}\"", query.replace('"', "\"\""));
+
     let mut stmt = conn.prepare(
         "SELECT s.id, s.session_id, s.summary_text, s.tags, s.intent, s.created_at, rank
          FROM summaries_fts f
@@ -79,7 +87,7 @@ pub fn search_summaries(
     )?;
 
     let results = stmt
-        .query_map(params![query, limit as i64], |row| {
+        .query_map(params![escaped, limit as i64], |row| {
             Ok(SummarySearchResult {
                 summary: Summary {
                     id: Some(row.get(0)?),
@@ -108,7 +116,7 @@ pub fn get_commands_today(conn: &Connection) -> Result<Vec<Command>> {
         .timestamp_millis();
 
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code
+        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code, output
          FROM commands
          WHERE timestamp >= ?1
          ORDER BY timestamp ASC",
@@ -126,6 +134,7 @@ pub fn get_commands_today(conn: &Connection) -> Result<Vec<Command>> {
                 git_repo: row.get(6)?,
                 git_branch: row.get(7)?,
                 exit_code: row.get(8)?,
+                output: row.get(9)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -154,7 +163,7 @@ pub fn get_commands_on_date(conn: &Connection, date: &str) -> Result<Vec<Command
         .timestamp_millis();
 
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code
+        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code, output
          FROM commands
          WHERE timestamp >= ?1 AND timestamp < ?2
          ORDER BY timestamp ASC",
@@ -172,6 +181,7 @@ pub fn get_commands_on_date(conn: &Connection, date: &str) -> Result<Vec<Command
                 git_repo: row.get(6)?,
                 git_branch: row.get(7)?,
                 exit_code: row.get(8)?,
+                output: row.get(9)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -182,7 +192,7 @@ pub fn get_commands_on_date(conn: &Connection, date: &str) -> Result<Vec<Command
 
 pub fn get_session_commands(conn: &Connection, session_id: &str) -> Result<Vec<Command>> {
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code
+        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code, output
          FROM commands
          WHERE session_id = ?1
          ORDER BY timestamp ASC",
@@ -200,6 +210,7 @@ pub fn get_session_commands(conn: &Connection, session_id: &str) -> Result<Vec<C
                 git_repo: row.get(6)?,
                 git_branch: row.get(7)?,
                 exit_code: row.get(8)?,
+                output: row.get(9)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()
@@ -272,7 +283,7 @@ pub fn get_unsummarized_sessions(conn: &Connection, min_commands: usize) -> Resu
 
 pub fn get_all_commands(conn: &Connection, limit: usize) -> Result<Vec<Command>> {
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code
+        "SELECT id, session_id, command_text, timestamp, duration_ms, cwd, git_repo, git_branch, exit_code, output
          FROM commands
          ORDER BY timestamp DESC
          LIMIT ?1",
@@ -290,6 +301,7 @@ pub fn get_all_commands(conn: &Connection, limit: usize) -> Result<Vec<Command>>
                 git_repo: row.get(6)?,
                 git_branch: row.get(7)?,
                 exit_code: row.get(8)?,
+                output: row.get(9)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()

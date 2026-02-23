@@ -21,5 +21,6 @@ axum = "0.7"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 anyhow = "1"
 colored = "2"
+regex = "1"
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-bedrockruntime = "1"

@@ -20,6 +20,7 @@ pub struct Command {
     pub git_repo: Option<String>,
     pub git_branch: Option<String>,
     pub exit_code: Option<i32>,
+    pub output: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

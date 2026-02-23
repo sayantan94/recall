@@ -33,6 +33,8 @@ pub enum Commands {
         session: String,
         #[arg(long)]
         terminal: Option<String>,
+        #[arg(long)]
+        output_file: Option<String>,
     },
     /// Generate a new session ID
     #[command(hide = true)]

@@ -156,7 +156,7 @@ Verify:
 
 ```bash
 ~/.cargo/bin/recall --version
-# recall 0.2.0
+# recall 1.0.0
 ```
 
 ### 3. Put recall on your PATH
@@ -190,10 +190,10 @@ recall --version
 recall setup
 ```
 
-This is the only command you need to run. It does four things:
+It indexes, then reports. It writes only to its own database in `~/.recall` — never to your shell config.
 
 1. **Indexes your agent sessions.** Every Claude Code and Codex conversation already on disk becomes searchable. This is retroactive — your whole history lights up on the first run, in a few seconds.
-2. **Offers to add the shell hook to `~/.zshrc`.** It prints the exact line first and waits for a `y`. It never edits the file without asking. See step 5.
+2. **Tells you what to put in `~/.zshrc`,** if you want shell recording. **recall never writes to that file** — it prints the exact line for you to add. See step 5.
 3. **Checks the ask engine.** Reports whether `claude` or `codex` is on your PATH, which is what makes plain-English questions work without an API key.
 4. **Prints what to try next**, naming your most recent session back to you.
 
@@ -206,11 +206,12 @@ This is the only command you need to run. It does four things:
   └ ✓ 1333 conversations indexed across 34 projects in 8.1s — searchable right now
 
   ┌ Shell recording  captures every command you run from now on
-  │   recall never edits ~/.zshrc without asking.
-  │   eval "$(/Users/you/.cargo/bin/recall init zsh)"
-  │   This also wraps new shells in `script` so command output is captured.
-  │   Append it to ~/.zshrc? [y/N] y
-  └ ✓ added — every new terminal starts recording automatically
+  └ not set up yet
+
+    To record shell commands, edit ~/.zshrc yourself:  (recall never writes to it)
+      1. Add this line at the end:
+           eval "$(/Users/you/.cargo/bin/recall init zsh)"
+      2. Reload:  source ~/.zshrc
 
   ┌ Ask engine       lets you ask `recall "what broke yesterday"`
   └ ✓ claude and codex found on PATH — no API key needed
@@ -224,23 +225,15 @@ This is the only command you need to run. It does four things:
     recall "what broke yesterday"   ask your history in plain English
 ```
 
-Use `recall setup --yes` to accept the `~/.zshrc` edit without the prompt (useful in a dotfiles script).
+`recall setup` only ever writes to its own database in `~/.recall`. Your shell config is yours — it reports, you edit.
 
 ### 5. The `~/.zshrc` line, in full
 
 **This step is only for recording shell commands.** Searching and resuming agent sessions works without it — skip this whole step if that's all you want.
 
-When you answer `y` in step 4, recall appends exactly this to the end of `~/.zshrc`:
+**recall does not edit `~/.zshrc`.** `recall setup` prints the line and you add it — that file is yours, and often generated or version controlled.
 
-```bash
-
-# recall — records shell history
-eval "$(/Users/you/.cargo/bin/recall init zsh)"
-```
-
-The path is absolute and points at whichever binary you ran `recall setup` with, so it keeps working regardless of your `PATH`.
-
-**To add it by hand instead**, open `~/.zshrc` in an editor and paste this at the end:
+Open `~/.zshrc` in an editor and paste this at the end:
 
 ```bash
 eval "$(~/.cargo/bin/recall init zsh)"
@@ -252,7 +245,9 @@ Or append it in one command:
 echo 'eval "$(~/.cargo/bin/recall init zsh)"' >> ~/.zshrc
 ```
 
-(Use single quotes exactly as written — the `$(...)` must reach the file unexpanded, so that it runs each time a shell starts.)
+(Use single quotes exactly as written — the `$(...)` must reach the file unexpanded, so it runs each time a shell starts.)
+
+The line works regardless of your `PATH`, since it names the binary directly.
 
 **Either way, load it:**
 
@@ -298,10 +293,8 @@ recall "what broke today"    # plain-English question
 
 `recall setup` is safe to re-run any time and doubles as a status screen. It's also how you clean up after an upgrade:
 
-- **An older install still wired into `~/.zshrc`** — a hook line or an `alias recall=` pointing at a previous binary — is detected and offered up for repointing. Your previous file is saved as `~/.zshrc.recall-backup` first.
-- **An index built by an older version** is rebuilt automatically, since parsing rules change between releases.
-
-If you decline the edit, setup prints the exact lines to change, whether `PATH` needs fixing, how to reload, and how to start recall meanwhile.
+- **An older install still wired into `~/.zshrc`** — a hook line or an `alias recall=` pointing at a previous binary — is detected and reported, with the exact replacement lines to paste. Setup won't change them for you.
+- **An index built by an older version** is rebuilt automatically, since parsing rules change between releases. This is recall's own data, so it does happen for you.
 
 ### Troubleshooting
 
@@ -311,7 +304,7 @@ If you decline the edit, setup prints the exact lines to change, whether `PATH` 
 
 **A new agent session doesn't appear** — press `Ctrl+R` in the TUI to rescan, or run `recall agents index`.
 
-**Two different recalls installed** — run `recall setup`; it detects a stale binary still wired into `~/.zshrc` and offers to repoint it.
+**Two different recalls installed** — run `recall setup`; it reports any stale binary still wired into `~/.zshrc` and prints the replacement lines.
 
 ### Building without installing
 

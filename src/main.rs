@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Setup { yes }) => setup::run(yes)?,
+        Some(Commands::Setup) => setup::run()?,
         Some(Commands::Init { shell }) => handle_init(&shell),
         Some(Commands::Log {
             command,

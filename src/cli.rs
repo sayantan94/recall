@@ -17,12 +17,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Set up recall: index agent sessions, install the shell hook, check the ask engine
-    Setup {
-        /// Install the shell hook without asking
-        #[arg(long)]
-        yes: bool,
-    },
+    /// Index your agent sessions and report what else is worth setting up
+    Setup,
     /// Initialize shell hook (e.g., `eval "$(recall init zsh)"`)
     Init {
         /// Shell type

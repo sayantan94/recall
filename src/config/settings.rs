@@ -21,13 +21,19 @@ pub struct PrivacyConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmProvider {
+    /// Use an installed AI CLI if there is one, else fall back to the API.
+    Auto,
+    /// Always drive an installed `claude` or `codex` CLI.
+    Cli,
     Anthropic,
     Bedrock,
 }
 
 impl Default for LlmProvider {
+    /// Zero-config is the happy path: if the user already has Claude Code or
+    /// Codex installed and logged in, recall needs no API key at all.
     fn default() -> Self {
-        Self::Anthropic
+        Self::Auto
     }
 }
 
@@ -41,6 +47,11 @@ pub struct LlmConfig {
     #[serde(default = "default_base_url")]
     pub base_url: String,
     pub aws_region: Option<String>,
+    /// Which installed CLI to drive: "claude" or "codex". None picks whichever
+    /// is on PATH, preferring Claude Code.
+    pub cli: Option<String>,
+    /// Model override passed to that CLI. None lets the tool choose.
+    pub cli_model: Option<String>,
 }
 
 fn default_ignore_patterns() -> Vec<String> {
@@ -82,6 +93,8 @@ impl Default for LlmConfig {
             model: default_model(),
             base_url: default_base_url(),
             aws_region: None,
+            cli: None,
+            cli_model: None,
         }
     }
 }

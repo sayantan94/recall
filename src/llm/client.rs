@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::config::settings::{LlmConfig, LlmProvider};
+use crate::llm::cli_backend;
 
 #[derive(Debug, Serialize)]
 struct AnthropicMessage {
@@ -32,9 +33,61 @@ pub async fn call_claude(
     user_prompt: &str,
 ) -> Result<String> {
     match config.provider {
+        // Claude Code first, then Codex, then a configured API key.
+        LlmProvider::Auto => match detect_cli(config) {
+            Some(backend) => call_cli(backend, system_context, user_prompt).await,
+            None if config.api_key.is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok() => {
+                call_anthropic(config, system_context, user_prompt).await
+            }
+            None => bail!(NO_CLI_FOUND),
+        },
+        LlmProvider::Cli => {
+            let backend = detect_cli(config).context(NO_CLI_FOUND)?;
+            call_cli(backend, system_context, user_prompt).await
+        }
         LlmProvider::Anthropic => call_anthropic(config, system_context, user_prompt).await,
         LlmProvider::Bedrock => call_bedrock(config, system_context, user_prompt).await,
     }
+}
+
+/// Human-readable name of whatever will answer the next question, for status output.
+pub fn backend_label(config: &LlmConfig) -> String {
+    match config.provider {
+        LlmProvider::Auto => match detect_cli(config) {
+            Some(backend) => format!("via {}", backend.label()),
+            None => "via the Anthropic API".to_string(),
+        },
+        LlmProvider::Cli => match detect_cli(config) {
+            Some(backend) => format!("via {}", backend.label()),
+            None => "no AI CLI found".to_string(),
+        },
+        LlmProvider::Anthropic => "via the Anthropic API".to_string(),
+        LlmProvider::Bedrock => "via AWS Bedrock".to_string(),
+    }
+}
+
+/// Asking questions is optional, so this needs to read as a missing extra
+/// rather than a broken install.
+const NO_CLI_FOUND: &str = "Asking questions needs Claude Code or Codex installed.\n  \
+     Install either one (they are used in headless mode, no API key required),\n  \
+     or set ANTHROPIC_API_KEY in ~/.recall/env.\n  \
+     Everything else in recall works without it.";
+
+fn detect_cli(config: &LlmConfig) -> Option<cli_backend::CliBackend> {
+    cli_backend::detect(config.cli.as_deref(), config.cli_model.as_deref())
+}
+
+/// Drive an installed CLI. The subprocess blocks, so it runs off the async
+/// runtime's worker threads.
+async fn call_cli(
+    backend: cli_backend::CliBackend,
+    system_context: &str,
+    user_prompt: &str,
+) -> Result<String> {
+    let prompt = format!("{}\n\n{}", system_context, user_prompt);
+    tokio::task::spawn_blocking(move || cli_backend::invoke(&backend, &prompt))
+        .await
+        .context("AI CLI task failed")?
 }
 
 async fn call_anthropic(

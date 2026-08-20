@@ -105,6 +105,8 @@ pub fn initialize_db(conn: &Connection) -> Result<()> {
         }
     }
 
+    initialize_ai_tables(conn)?;
+
     let has_summaries_fts: bool = conn
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='summaries_fts'")?
         .exists([])?;
@@ -124,6 +126,87 @@ pub fn initialize_db(conn: &Connection) -> Result<()> {
             ",
         )
         .context("Failed to create summaries FTS table")?;
+    }
+
+    Ok(())
+}
+
+/// Tables for indexed AI assistant sessions (Claude Code, Codex).
+///
+/// Chunks — not whole sessions — are what FTS5 indexes, so a long conversation
+/// stays findable by any part of it. The FTS table is external-content over
+/// `ai_chunks` and needs delete/update triggers as well as insert, because
+/// re-indexing a changed transcript replaces its chunks.
+fn initialize_ai_tables(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS ai_sessions (
+            uid TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            project TEXT NOT NULL,
+            title TEXT,
+            started_at INTEGER NOT NULL,
+            last_activity INTEGER NOT NULL,
+            model TEXT,
+            message_count INTEGER NOT NULL DEFAULT 0,
+            file_path TEXT NOT NULL,
+            file_mtime INTEGER NOT NULL,
+            file_size INTEGER NOT NULL,
+            indexed_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chunk_id TEXT NOT NULL UNIQUE,
+            session_uid TEXT NOT NULL,
+            source TEXT NOT NULL,
+            project TEXT NOT NULL,
+            title TEXT,
+            timestamp INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            FOREIGN KEY (session_uid) REFERENCES ai_sessions(uid) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ai_sessions_activity ON ai_sessions(last_activity);
+        CREATE INDEX IF NOT EXISTS idx_ai_sessions_project ON ai_sessions(project);
+        CREATE INDEX IF NOT EXISTS idx_ai_sessions_source ON ai_sessions(source);
+        CREATE INDEX IF NOT EXISTS idx_ai_chunks_session ON ai_chunks(session_uid);
+        ",
+    )
+    .context("Failed to create AI session tables")?;
+
+    let has_ai_chunks_fts: bool = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_chunks_fts'")?
+        .exists([])?;
+
+    if !has_ai_chunks_fts {
+        conn.execute_batch(
+            "
+            CREATE VIRTUAL TABLE ai_chunks_fts USING fts5(
+                text, title, project,
+                content='ai_chunks', content_rowid='id'
+            );
+
+            CREATE TRIGGER ai_chunks_ai AFTER INSERT ON ai_chunks BEGIN
+                INSERT INTO ai_chunks_fts(rowid, text, title, project)
+                VALUES (new.id, new.text, new.title, new.project);
+            END;
+
+            CREATE TRIGGER ai_chunks_ad AFTER DELETE ON ai_chunks BEGIN
+                INSERT INTO ai_chunks_fts(ai_chunks_fts, rowid, text, title, project)
+                VALUES ('delete', old.id, old.text, old.title, old.project);
+            END;
+
+            CREATE TRIGGER ai_chunks_au AFTER UPDATE ON ai_chunks BEGIN
+                INSERT INTO ai_chunks_fts(ai_chunks_fts, rowid, text, title, project)
+                VALUES ('delete', old.id, old.text, old.title, old.project);
+                INSERT INTO ai_chunks_fts(rowid, text, title, project)
+                VALUES (new.id, new.text, new.title, new.project);
+            END;
+            ",
+        )
+        .context("Failed to create AI chunk FTS table")?;
     }
 
     Ok(())

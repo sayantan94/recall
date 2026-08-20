@@ -1,3 +1,4 @@
+mod ai;
 mod capture;
 mod cli;
 mod config;
@@ -5,6 +6,7 @@ mod db;
 mod llm;
 mod privacy;
 mod search;
+mod setup;
 mod shell;
 mod tui;
 mod web;
@@ -21,6 +23,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Commands::Setup { yes }) => setup::run(yes)?,
         Some(Commands::Init { shell }) => handle_init(&shell),
         Some(Commands::Log {
             command,
@@ -54,6 +57,7 @@ async fn main() -> Result<()> {
         Some(Commands::Pause) => handle_pause()?,
         Some(Commands::Resume) => handle_resume()?,
         Some(Commands::Summarize) => handle_summarize().await?,
+        Some(Commands::Agents { command }) => ai::commands::handle(command)?,
         Some(Commands::Ui) => tui::app::run_tui()?,
         Some(Commands::Web { port }) => web::server::start_server(port).await?,
         None => {
@@ -61,7 +65,9 @@ async fn main() -> Result<()> {
                 let question = cli.question.join(" ");
                 handle_ask(&question).await?;
             } else {
-                handle_today()?;
+                // Bare `recall` opens the TUI — the fastest path to seeing
+                // everything recall knows.
+                tui::app::run_tui()?;
             }
         }
     }
@@ -182,7 +188,7 @@ async fn handle_summarize() -> Result<()> {
         "◉".cyan(),
         session_ids.len().to_string().bold()
     );
-    println!("  {}", "─".repeat(50).dimmed());
+    println!("  {}", "─".repeat(60).dimmed());
 
     for session_id in &session_ids {
         let commands = db::queries::get_session_commands(&conn, session_id)?;
@@ -214,7 +220,7 @@ async fn handle_summarize() -> Result<()> {
         }
     }
 
-    println!("  {}", "─".repeat(50).dimmed());
+    println!("  {}", "─".repeat(60).dimmed());
     println!();
 
     Ok(())
@@ -254,7 +260,12 @@ async fn handle_ask(question: &str) -> Result<()> {
     candidates.truncate(100);
 
     println!();
-    println!("  {} {}", "◉".cyan(), "Thinking...".dimmed());
+    println!(
+        "  {} {} {}",
+        "◉".cyan(),
+        "Thinking...".dimmed(),
+        llm::client::backend_label(&cfg.llm).dimmed()
+    );
 
     let answer = llm::answerer::answer_question(&cfg.llm, question, &candidates).await?;
 

@@ -703,6 +703,8 @@ fn render_status(frame: &mut Frame, area: Rect, app: &App) {
         text(" group  "),
         key("^O"),
         text(" sort  "),
+        key("^R"),
+        text(" refresh  "),
         key("F1"),
         text(" help"),
     ];
@@ -711,7 +713,16 @@ fn render_status(frame: &mut Frame, area: Rect, app: &App) {
         spans.push(key("/"));
         spans.push(text(" search"));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), columns[0]);
+
+    // A refresh note replaces the key hints until the next keystroke.
+    let left = match &app.status {
+        Some(note) => Line::from(vec![
+            Span::styled(" ● ", Style::default().fg(ACCENT)),
+            Span::styled(note.clone(), Style::default().fg(TEXT)),
+        ]),
+        None => Line::from(spans),
+    };
+    frame.render_widget(Paragraph::new(left), columns[0]);
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -757,6 +768,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect, app: &App) {
         ("Ctrl+S", "next source tab"),
         ("Ctrl+G", "group by source, or show one flat newest-first list"),
         ("Ctrl+O", "sort by newest or by best match"),
+        ("Ctrl+R", "rescan transcripts for sessions written since recall opened"),
         ("Esc", "clear the query, then quit"),
         ("", ""),
         ("", "ACTING"),

@@ -15,6 +15,7 @@ use rusqlite::Connection;
 use std::io::stdout;
 use std::time::Duration;
 
+use crate::ai::indexer;
 use crate::ai::models::{AiSession, Source};
 use crate::ai::resume::{self, CommandSpec};
 use crate::ai::search as ai_search;
@@ -261,6 +262,8 @@ pub struct App {
     pub counts: Vec<(Kind, usize)>,
     pub total_commands: usize,
     pub total_agent_sessions: usize,
+    /// Transient note shown in the status bar, e.g. after a manual refresh.
+    pub status: Option<String>,
     pub show_help: bool,
     pub help_scroll: usize,
     pub resume_dialog: Option<ResumeDialog>,
@@ -290,6 +293,7 @@ impl App {
             counts: Vec::new(),
             total_commands: queries::get_all_commands(conn, 1_000_000)?.len(),
             total_agent_sessions: ai_store::stats(conn)?.sessions,
+            status: None,
             show_help: false,
             help_scroll: 0,
             resume_dialog: None,
@@ -308,6 +312,7 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent, conn: &Connection, frame_height: u16) -> Result<()> {
         let visible = self.visible_height(frame_height).max(1);
+        self.status = None;
 
         // Overlays swallow every key while they are up.
         if self.resume_dialog.is_some() {
@@ -361,6 +366,10 @@ impl App {
             KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.grouped = !self.grouped;
                 return self.rebuild_rows(conn);
+            }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // reindex() sets the status note, so it must run after the clear.
+                return self.reindex(conn);
             }
             KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.sort = self.sort.toggled();
@@ -574,6 +583,26 @@ impl App {
             Preview::Commands(commands) => commands.len().saturating_sub(1),
             Preview::Empty => 0,
         }
+    }
+
+    /// Rescan the transcripts on disk and rebuild the list. Cheap when nothing
+    /// changed, so it also runs once when the TUI opens.
+    pub fn reindex(&mut self, conn: &Connection) -> Result<()> {
+        let report = indexer::index_all(conn, false)?;
+        let changed = report.added + report.updated + report.removed;
+
+        self.total_agent_sessions = ai_store::stats(conn)?.sessions;
+        self.total_commands = queries::get_all_commands(conn, 1_000_000)?.len();
+        self.status = Some(if changed == 0 {
+            "index already up to date".to_string()
+        } else {
+            format!(
+                "indexed {} new · {} updated · {} removed",
+                report.added, report.updated, report.removed
+            )
+        });
+
+        self.refresh(conn)
     }
 
     /// Re-query every source for the current search, then apply the active tab.
@@ -1012,6 +1041,15 @@ fn drain_escape_sequence() -> Result<()> {
 
 pub fn run_tui() -> Result<()> {
     let conn = crate::db::schema::open_db()?;
+
+    // Pick up transcripts written since the last run. A warm rescan is well
+    // under a second; a cold one is only slow on a machine that has never
+    // indexed, so say something before it starts.
+    if ai_store::stats(&conn)?.sessions == 0 {
+        println!("  Indexing Claude Code and Codex transcripts for the first time...");
+    }
+    indexer::index_all(&conn, false)?;
+
     let mut app = App::new(&conn)?;
 
     enable_raw_mode()?;
@@ -1064,7 +1102,23 @@ pub fn run_tui() -> Result<()> {
 mod tests {
     use super::*;
 
+    /// Point the source parsers at an empty directory so tests never scan — or
+    /// depend on — the real transcripts in the developer's home.
+    fn isolate_transcript_dirs() {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            let empty = std::env::temp_dir().join("recall-test-empty");
+            std::fs::create_dir_all(&empty).ok();
+            unsafe {
+                std::env::set_var("RECALL_CLAUDE_DIR", &empty);
+                std::env::set_var("RECALL_CODEX_DIR", &empty);
+            }
+        });
+    }
+
     fn test_app() -> (App, Connection) {
+        isolate_transcript_dirs();
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         crate::db::schema::initialize_db(&conn).unwrap();
@@ -1312,6 +1366,28 @@ mod tests {
         assert!(app.selected_entry().is_none());
         let summary = app.group_summary(Kind::Claude);
         assert_eq!(summary.count, 2);
+    }
+
+    #[test]
+    fn ctrl_r_rescans_and_reports_what_changed() {
+        let (mut app, conn) = test_app();
+        press(&mut app, &conn, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert_eq!(
+            app.status.as_deref(),
+            Some("index already up to date"),
+            "an empty machine has nothing new to pick up"
+        );
+        assert_eq!(app.input, "", "the binding is not typed");
+    }
+
+    #[test]
+    fn the_status_note_clears_on_the_next_keystroke() {
+        let (mut app, conn) = test_app();
+        press(&mut app, &conn, KeyCode::Char('r'), KeyModifiers::CONTROL);
+        assert!(app.status.is_some());
+
+        typed(&mut app, &conn, "x");
+        assert!(app.status.is_none());
     }
 
     #[test]

@@ -21,12 +21,24 @@ fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Where Claude Code keeps its transcripts.
+///
+/// `RECALL_CLAUDE_DIR` overrides it, so tests and sandboxed runs can point at a
+/// fixture directory instead of the real one.
 pub fn projects_dir_claude() -> PathBuf {
-    home().join(".claude").join("projects")
+    override_dir("RECALL_CLAUDE_DIR")
+        .unwrap_or_else(|| home().join(".claude").join("projects"))
 }
 
+/// Where Codex keeps its transcripts. `RECALL_CODEX_DIR` overrides it.
 pub fn sessions_dir_codex() -> PathBuf {
-    home().join(".codex").join("sessions")
+    override_dir("RECALL_CODEX_DIR").unwrap_or_else(|| home().join(".codex").join("sessions"))
+}
+
+fn override_dir(variable: &str) -> Option<PathBuf> {
+    std::env::var_os(variable)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Parse an RFC 3339 timestamp into milliseconds since epoch, matching how the
@@ -52,5 +64,14 @@ mod tests {
     #[test]
     fn rejects_garbage_timestamps() {
         assert_eq!(parse_rfc3339_millis("not a time"), None);
+    }
+
+    #[test]
+    fn transcript_directories_can_be_overridden() {
+        // Safety: the variable is set and read on this thread only.
+        unsafe { std::env::set_var("RECALL_CLAUDE_DIR", "/tmp/recall-fixture") };
+        assert_eq!(projects_dir_claude(), PathBuf::from("/tmp/recall-fixture"));
+        unsafe { std::env::remove_var("RECALL_CLAUDE_DIR") };
+        assert!(projects_dir_claude().ends_with(".claude/projects"));
     }
 }

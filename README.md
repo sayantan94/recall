@@ -189,7 +189,12 @@ That one command does everything:
 recall
 ```
 
-Re-running `recall setup` any time is safe — it doubles as a status screen.
+Re-running `recall setup` any time is safe — it doubles as a status screen, and it is how you clean up after an upgrade:
+
+- **An older install still wired up in `~/.zshrc`** — a hook line or `alias recall=` pointing at a previous binary — is detected and offered up for repointing. Your previous `~/.zshrc` is saved as `~/.zshrc.recall-backup` first.
+- **An index built by an older version** is rebuilt automatically. Parsing rules change between releases, so an index carried over would otherwise keep returning text the current version would never produce.
+
+If you decline the `~/.zshrc` edit, setup prints the exact lines to change, how to reload, and how to start recall in the meantime — nothing is required for agent session search, which works without the hook.
 
 > Shell recording only captures commands run *after* the hook is installed. Agent session search is retroactive and works on everything already on disk.
 

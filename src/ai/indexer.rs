@@ -14,6 +14,15 @@ use super::models::{AiSession, Source};
 use super::sources::source_for;
 use super::store;
 
+/// Bumped whenever parsing or chunking changes what a transcript turns into.
+/// An index written by an older format is rebuilt from scratch rather than
+/// left holding text this build would never produce — for example the injected
+/// Codex context and recall's own headless prompts, which earlier versions
+/// indexed and this one filters out.
+pub const INDEX_FORMAT: u32 = 2;
+
+const INDEX_FORMAT_KEY: &str = "index_format";
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IndexReport {
     pub added: usize,
@@ -21,6 +30,8 @@ pub struct IndexReport {
     pub unchanged: usize,
     pub removed: usize,
     pub chunks: usize,
+    /// Set when a stale index was discarded and rebuilt.
+    pub rebuilt: bool,
     /// Transcripts that could not be parsed, with the reason.
     pub failed: Vec<(String, String)>,
 }
@@ -32,18 +43,45 @@ impl IndexReport {
         self.unchanged += other.unchanged;
         self.removed += other.removed;
         self.chunks += other.chunks;
+        self.rebuilt |= other.rebuilt;
         self.failed.extend(other.failed);
     }
 }
 
 /// Index every supported source. `force` re-reads transcripts even when their
 /// size and mtime are unchanged.
+///
+/// An index left behind by an older build is rebuilt automatically, so
+/// upgrading never leaves stale text behind to be found in searches.
 pub fn index_all(conn: &Connection, force: bool) -> Result<IndexReport> {
-    let mut report = IndexReport::default();
+    let stale = index_is_stale(conn)?;
+    let mut report = IndexReport {
+        rebuilt: stale,
+        ..Default::default()
+    };
+
     for source in Source::ALL {
-        report.merge(index_source(conn, source, force)?);
+        report.merge(index_source(conn, source, force || stale)?);
     }
+
+    store::set_meta(conn, INDEX_FORMAT_KEY, &INDEX_FORMAT.to_string())?;
+    report.rebuilt = stale;
     Ok(report)
+}
+
+/// True when the index on disk was written by a build that parsed transcripts
+/// differently. A brand-new index is not stale — there is nothing to discard.
+fn index_is_stale(conn: &Connection) -> Result<bool> {
+    if store::stats(conn)?.sessions == 0 {
+        return Ok(false);
+    }
+
+    let recorded = store::get_meta(conn, INDEX_FORMAT_KEY)?
+        .and_then(|value| value.parse::<u32>().ok())
+        // No marker at all means it predates version tracking.
+        .unwrap_or(0);
+
+    Ok(recorded != INDEX_FORMAT)
 }
 
 pub fn index_source(conn: &Connection, source: Source, force: bool) -> Result<IndexReport> {
@@ -169,6 +207,17 @@ mod tests {
         }
     }
 
+    fn test_conn() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::db::schema::initialize_db(&conn).unwrap();
+        conn
+    }
+
+    fn seed_one_session(conn: &rusqlite::Connection) {
+        store::upsert_session(conn, &session(), 0).unwrap();
+    }
+
     fn session() -> AiSession {
         AiSession {
             uid: session_uid(Source::Claude, "s1"),
@@ -238,6 +287,27 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_index_is_not_stale() {
+        let conn = test_conn();
+        assert!(!index_is_stale(&conn).unwrap(), "nothing indexed yet");
+    }
+
+    #[test]
+    fn an_index_from_an_older_build_is_stale() {
+        let conn = test_conn();
+        seed_one_session(&conn);
+
+        // No marker: written before version tracking existed.
+        assert!(index_is_stale(&conn).unwrap());
+
+        store::set_meta(&conn, INDEX_FORMAT_KEY, "1").unwrap();
+        assert!(index_is_stale(&conn).unwrap(), "an older format is stale");
+
+        store::set_meta(&conn, INDEX_FORMAT_KEY, &INDEX_FORMAT.to_string()).unwrap();
+        assert!(!index_is_stale(&conn).unwrap(), "the current format is not");
+    }
+
+    #[test]
     fn report_merge_sums_counters() {
         let mut a = IndexReport {
             added: 1,
@@ -245,6 +315,7 @@ mod tests {
             unchanged: 3,
             removed: 4,
             chunks: 5,
+            rebuilt: false,
             failed: vec![("x".into(), "boom".into())],
         };
         a.merge(IndexReport {

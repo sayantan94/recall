@@ -73,6 +73,24 @@ pub fn fts_query(raw: &str) -> String {
         .join(" AND ")
 }
 
+pub fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>> {
+    let mut stmt = conn.prepare("SELECT value FROM recall_meta WHERE key = ?1")?;
+    let mut rows = stmt.query_map(params![key], |row| row.get::<_, String>(0))?;
+    match rows.next() {
+        Some(value) => Ok(Some(value?)),
+        None => Ok(None),
+    }
+}
+
+pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO recall_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
+}
+
 pub fn upsert_session(conn: &Connection, session: &AiSession, indexed_at: i64) -> Result<()> {
     conn.execute(
         "INSERT INTO ai_sessions (uid, source, session_id, project, title, started_at,
@@ -442,6 +460,18 @@ mod tests {
             timestamp: session.started_at,
             text: text.into(),
         }
+    }
+
+    #[test]
+    fn meta_round_trips_and_overwrites() {
+        let conn = test_db();
+        assert_eq!(get_meta(&conn, "index_format").unwrap(), None);
+
+        set_meta(&conn, "index_format", "2").unwrap();
+        assert_eq!(get_meta(&conn, "index_format").unwrap().as_deref(), Some("2"));
+
+        set_meta(&conn, "index_format", "3").unwrap();
+        assert_eq!(get_meta(&conn, "index_format").unwrap().as_deref(), Some("3"));
     }
 
     #[test]

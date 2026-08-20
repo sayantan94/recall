@@ -17,6 +17,8 @@ use crate::llm::cli_backend;
 
 /// Marker recall looks for when deciding whether the hook is already installed.
 const HOOK_MARKER: &str = "recall init zsh";
+/// An alias pointing at a specific binary shadows whatever is on PATH.
+const ALIAS_MARKER: &str = "alias recall=";
 const RULE: usize = 60;
 
 pub fn run(assume_yes: bool) -> Result<()> {
@@ -106,6 +108,260 @@ pub enum HookStatus {
     NotZsh,
 }
 
+/// A line in `~/.zshrc` that runs a specific recall binary.
+#[derive(Debug, Clone)]
+struct WiredLine {
+    number: usize,
+    text: String,
+    binary: PathBuf,
+    is_alias: bool,
+}
+
+/// Every uncommented line that wires up a recall binary, with the path it runs.
+fn wired_lines(zshrc: &Path) -> Vec<WiredLine> {
+    let contents = match std::fs::read_to_string(zshrc) {
+        Ok(contents) => contents,
+        Err(_) => return Vec::new(),
+    };
+
+    contents
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| !line.trim_start().starts_with('#'))
+        .filter_map(|(index, line)| {
+            let (binary, is_alias) = if line.contains(HOOK_MARKER) {
+                (hook_binary(line)?, false)
+            } else if line.contains(ALIAS_MARKER) {
+                (alias_binary(line)?, true)
+            } else {
+                return None;
+            };
+
+            Some(WiredLine {
+                number: index + 1,
+                text: line.to_string(),
+                binary,
+                is_alias,
+            })
+        })
+        .collect()
+}
+
+/// `eval "$(/path/to/recall init zsh)"` -> `/path/to/recall`
+///
+/// Split on the arguments only: `HOOK_MARKER` starts with the binary name, so
+/// splitting on it would swallow the last path segment.
+fn hook_binary(line: &str) -> Option<PathBuf> {
+    let before = line.split(" init zsh").next()?;
+    let start = before.rfind("$(").map(|i| i + 2).unwrap_or(0);
+    Some(expand_home(before[start..].trim().trim_matches('"').trim_matches('\'')))
+}
+
+/// `alias recall="/path/to/recall"` -> `/path/to/recall`
+fn alias_binary(line: &str) -> Option<PathBuf> {
+    let value = line.split_once('=')?.1.trim();
+    Some(expand_home(value.trim_matches('"').trim_matches('\'')))
+}
+
+fn expand_home(path: &str) -> PathBuf {
+    match path.strip_prefix("~/") {
+        Some(rest) => dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(rest),
+        None => PathBuf::from(path),
+    }
+}
+
+/// Two paths run the same program, following symlinks where possible.
+fn same_binary(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// Rewrite stale lines to run `current`, leaving every other line untouched.
+/// A backup is written first: this edits a file recall does not own.
+fn repoint_lines(zshrc: &Path, stale: &[WiredLine], current: &Path) -> Result<usize> {
+    let contents = std::fs::read_to_string(zshrc)
+        .with_context(|| format!("Failed to read {}", zshrc.display()))?;
+    let backup = zshrc.with_extension("recall-backup");
+    std::fs::write(&backup, &contents)
+        .with_context(|| format!("Failed to write {}", backup.display()))?;
+
+    let display = current.display().to_string();
+    let mut updated = 0;
+    let rewritten: Vec<String> = contents
+        .lines()
+        .enumerate()
+        .map(|(index, line)| {
+            match stale.iter().find(|entry| entry.number == index + 1) {
+                Some(entry) if entry.is_alias => {
+                    updated += 1;
+                    format!("alias recall=\"{}\"", display)
+                }
+                Some(_) => {
+                    updated += 1;
+                    format!("eval \"$({} init zsh)\"", display)
+                }
+                None => line.to_string(),
+            }
+        })
+        .collect();
+
+    let mut out = rewritten.join("\n");
+    if contents.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(zshrc, out)
+        .with_context(|| format!("Failed to write {}", zshrc.display()))?;
+
+    Ok(updated)
+}
+
+/// Point any older install still wired up in `~/.zshrc` at the binary running
+/// now, so an upgrade cannot leave a previous version shadowing it.
+fn clear_stale_install(assume_yes: bool) -> Result<()> {
+    let current = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(_) => return Ok(()),
+    };
+
+    let zshrc = zshrc_path();
+    let stale: Vec<WiredLine> = wired_lines(&zshrc)
+        .into_iter()
+        .filter(|entry| !same_binary(&entry.binary, &current))
+        .collect();
+
+    if stale.is_empty() {
+        println!(
+            "  {} {} {}",
+            "└".dimmed(),
+            "✓".green(),
+            "no older install left behind".dimmed()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "  {}   {}",
+        "│".dimmed(),
+        "an older install is still wired up:".yellow()
+    );
+    for entry in &stale {
+        println!(
+            "  {}     {} {}",
+            "│".dimmed(),
+            format!("line {}", entry.number).dimmed(),
+            truncate(entry.text.trim(), 72).dimmed()
+        );
+    }
+    println!(
+        "  {}   {}",
+        "│".dimmed(),
+        format!("they run a different binary than this one ({})", current.display()).dimmed()
+    );
+
+
+    if (!assume_yes && !std::io::stdin().is_terminal())
+        || (!assume_yes && !confirm("  │   Point them at this binary?")?)
+    {
+        println!("  {} {}", "└".dimmed(), "left unchanged".dimmed());
+        print_manual_steps(&current, &stale);
+        return Ok(());
+    }
+
+    let updated = repoint_lines(&zshrc, &stale, &current)?;
+    println!(
+        "  {} {} {}",
+        "└".dimmed(),
+        "✓".green(),
+        format!(
+            "repointed {} line{} (previous ~/.zshrc saved as ~/.zshrc.recall-backup)",
+            updated,
+            if updated == 1 { "" } else { "s" }
+        )
+        .dimmed()
+    );
+    Ok(())
+}
+
+/// Whether the directory holding the running binary is on PATH. If it is not,
+/// `recall` only works by full path or through an alias.
+fn on_path(binary: &Path) -> bool {
+    let dir = match binary.parent() {
+        Some(dir) => dir,
+        None => return false,
+    };
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|entry| entry == dir))
+        .unwrap_or(false)
+}
+
+/// What to do by hand when recall does not edit `~/.zshrc` — and how to run it
+/// in the meantime.
+fn print_manual_steps(current: &Path, stale: &[WiredLine]) {
+    let line = format!("eval \"$({} init zsh)\"", current.display());
+    println!();
+    println!("    {}", "To wire it up yourself:".bold());
+
+    let mut step = 1;
+    if stale.is_empty() {
+        println!("      {}. Add this line to {}:", step, "~/.zshrc".cyan());
+        println!("           {}", line.cyan());
+    } else {
+        println!(
+            "      {}. Replace {} in {}:",
+            step,
+            format!(
+                "line{} {}",
+                if stale.len() == 1 { "" } else { "s" },
+                stale
+                    .iter()
+                    .map(|entry| entry.number.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "~/.zshrc".cyan()
+        );
+        for entry in stale {
+            let replacement = if entry.is_alias {
+                format!("alias recall=\"{}\"", current.display())
+            } else {
+                line.clone()
+            };
+            println!("           {}", replacement.cyan());
+        }
+    }
+    step += 1;
+
+    if !on_path(current) {
+        println!(
+            "      {}. Put recall on your PATH by adding to {}:",
+            step, "~/.zshrc".cyan()
+        );
+        println!(
+            "           {}",
+            format!(
+                "export PATH=\"{}:$PATH\"",
+                current.parent().unwrap_or(Path::new("")).display()
+            )
+            .cyan()
+        );
+        step += 1;
+    }
+
+    println!("      {}. Reload your shell:  {}", step, "source ~/.zshrc".cyan());
+    println!();
+    println!("    {}", "Until then, recall still works — start it with:".bold());
+    println!("      {}", current.display().to_string().cyan());
+    println!(
+        "    {}",
+        "Only shell recording needs the hook; agent session search works without it.".dimmed()
+    );
+    println!();
+}
+
 fn install_shell_hook(assume_yes: bool) -> Result<HookStatus> {
     println!(
         "  {} {} {}",
@@ -128,11 +384,12 @@ fn install_shell_hook(assume_yes: bool) -> Result<HookStatus> {
     let zshrc = zshrc_path();
     if hook_present(&zshrc) {
         println!(
-            "  {} {} {}",
-            "└".dimmed(),
+            "  {}   {} {}",
+            "│".dimmed(),
             "✓".green(),
-            "already installed in ~/.zshrc".dimmed()
+            "hook installed in ~/.zshrc".dimmed()
         );
+        clear_stale_install(assume_yes)?;
         return Ok(HookStatus::AlreadyInstalled);
     }
 
@@ -149,23 +406,18 @@ fn install_shell_hook(assume_yes: bool) -> Result<HookStatus> {
         "This also wraps new shells in `script` so command output is captured.".dimmed()
     );
 
+    let current = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("recall"));
+
     // Never prompt when nobody is watching: `recall setup` stays safe in scripts.
     if !assume_yes && !std::io::stdin().is_terminal() {
-        println!(
-            "  {} {}",
-            "└".dimmed(),
-            "not installed — add the line above to ~/.zshrc, or re-run `recall setup --yes`"
-                .dimmed()
-        );
+        println!("  {} {}", "└".dimmed(), "not installed".yellow());
+        print_manual_steps(&current, &[]);
         return Ok(HookStatus::Declined);
     }
 
     if !assume_yes && !confirm("  │   Append it to ~/.zshrc?")? {
-        println!(
-            "  {} {}",
-            "└".dimmed(),
-            "left unchanged — copy the line above whenever you want it".dimmed()
-        );
+        println!("  {} {}", "└".dimmed(), "left unchanged".dimmed());
+        print_manual_steps(&current, &[]);
         return Ok(HookStatus::Declined);
     }
 
@@ -395,6 +647,87 @@ mod tests {
         append_hook(&path, "eval \"$(/bin/recall init zsh)\"").unwrap();
         assert!(hook_present(&path));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn hook_binary_is_read_out_of_an_eval_line() {
+        assert_eq!(
+            hook_binary(r#"eval "$(/usr/local/bin/recall init zsh)""#),
+            Some(PathBuf::from("/usr/local/bin/recall"))
+        );
+    }
+
+    #[test]
+    fn hook_binary_expands_a_home_relative_path() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            hook_binary(r#"eval "$(~/repos/recall/target/release/recall init zsh)""#),
+            Some(home.join("repos/recall/target/release/recall"))
+        );
+    }
+
+    #[test]
+    fn alias_binary_is_read_out_of_an_alias_line() {
+        assert_eq!(
+            alias_binary(r#"alias recall="/opt/recall""#),
+            Some(PathBuf::from("/opt/recall"))
+        );
+        assert_eq!(
+            alias_binary("alias recall='/opt/recall'"),
+            Some(PathBuf::from("/opt/recall"))
+        );
+    }
+
+    #[test]
+    fn wired_lines_finds_both_forms_and_skips_comments() {
+        let path = temp_file(
+            "wired",
+            "export FOO=1\n\
+             alias recall=\"/old/recall\"\n\
+             # eval \"$(/commented/recall init zsh)\"\n\
+             eval \"$(/old/recall init zsh)\"\n",
+        );
+        let found = wired_lines(&path);
+        assert_eq!(found.len(), 2, "the commented line does not count");
+        assert_eq!(found[0].number, 2);
+        assert!(found[0].is_alias);
+        assert_eq!(found[1].number, 4);
+        assert!(!found[1].is_alias);
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn repointing_rewrites_only_the_stale_lines() {
+        let path = temp_file(
+            "repoint",
+            "export FOO=1\n\
+             alias recall=\"/old/recall\"\n\
+             export BAR=2\n\
+             eval \"$(/old/recall init zsh)\"\n",
+        );
+        let stale = wired_lines(&path);
+        let updated = repoint_lines(&path, &stale, Path::new("/new/recall")).unwrap();
+        assert_eq!(updated, 2);
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains(r#"alias recall="/new/recall""#));
+        assert!(after.contains(r#"eval "$(/new/recall init zsh)""#));
+        assert!(!after.contains("/old/recall"), "no old path survives");
+        assert!(after.contains("export FOO=1") && after.contains("export BAR=2"));
+
+        let backup = path.with_extension("recall-backup");
+        assert!(
+            std::fs::read_to_string(&backup).unwrap().contains("/old/recall"),
+            "the previous file is kept"
+        );
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&backup).ok();
+    }
+
+    #[test]
+    fn same_binary_ignores_path_spelling() {
+        assert!(same_binary(Path::new("/bin/sh"), Path::new("/bin/sh")));
+        assert!(!same_binary(Path::new("/a/recall"), Path::new("/b/recall")));
     }
 
     #[test]

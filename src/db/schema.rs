@@ -172,6 +172,11 @@ fn initialize_ai_tables(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_ai_sessions_project ON ai_sessions(project);
         CREATE INDEX IF NOT EXISTS idx_ai_sessions_source ON ai_sessions(source);
         CREATE INDEX IF NOT EXISTS idx_ai_chunks_session ON ai_chunks(session_uid);
+
+        CREATE TABLE IF NOT EXISTS recall_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         ",
     )
     .context("Failed to create AI session tables")?;

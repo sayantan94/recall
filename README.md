@@ -124,41 +124,78 @@ Colours come from your terminal's own palette, and nothing is ever filled in. Bo
 
 ## Setup
 
-Three steps. The whole thing takes about a minute.
+recall has three parts, and they are independent. You can stop after any of them:
 
-### 1. Install Rust, if you don't have it
+| | What it gives you | What it needs |
+|---|---|---|
+| **The binary** | Search and resume every Claude Code / Codex session you already have | Rust |
+| **PATH** | Typing `recall` instead of a long path | One line in `~/.zshrc` |
+| **The shell hook** | Recording the commands you run from now on | One more line in `~/.zshrc`, zsh only |
+
+---
+
+### 1. Install Rust
+
+Skip if `cargo --version` already prints something.
 
 ```bash
-brew install rust          # or: curl https://sh.rustup.rs -sSf | sh
-```
-
-Make sure Cargo's bin directory is on your `PATH` — add this to `~/.zshrc` if it isn't already:
-
-```bash
-export PATH="$HOME/.cargo/bin:$PATH"
+curl https://sh.rustup.rs -sSf | sh      # or: brew install rust
 ```
 
 ### 2. Install recall
 
 ```bash
-git clone https://github.com/sayantan94/recall.git && cd recall
+git clone https://github.com/sayantan94/recall.git
+cd recall
 cargo install --path .
 ```
 
-Check it: `recall --version`
+This compiles recall and puts the binary at **`~/.cargo/bin/recall`**. It takes a couple of minutes the first time.
 
-### 3. Run setup
+Verify:
+
+```bash
+~/.cargo/bin/recall --version
+# recall 0.2.0
+```
+
+### 3. Put recall on your PATH
+
+`cargo install` does *not* touch your `PATH`. If typing `recall` gives you `command not found`, this is why.
+
+Check whether it's already there:
+
+```bash
+echo $PATH | tr ':' '\n' | grep '\.cargo/bin'
+```
+
+**No output?** Add it:
+
+```bash
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Now this should work from anywhere:
+
+```bash
+recall --version
+```
+
+> Prefer not to change your `PATH`? Everything below works with the full path `~/.cargo/bin/recall` instead of `recall`.
+
+### 4. Run `recall setup`
 
 ```bash
 recall setup
 ```
 
-That one command does everything:
+This is the only command you need to run. It does four things:
 
-1. **Indexes your agent sessions** — every Claude Code and Codex conversation already on disk becomes searchable immediately. This is retroactive: it works on your entire history from the very first run.
-2. **Offers to install the shell hook** — it shows you the exact line, explains that it wraps new shells in `script` so command output can be captured, and appends it to `~/.zshrc` **only if you say yes**. Pass `--yes` to skip the prompt, or decline and copy the line yourself.
-3. **Checks the ask engine** — reports whether `claude` or `codex` is on your PATH, so plain-English questions work with no API key.
-4. **Tells you what to try**, naming your most recent session back to you.
+1. **Indexes your agent sessions.** Every Claude Code and Codex conversation already on disk becomes searchable. This is retroactive — your whole history lights up on the first run, in a few seconds.
+2. **Offers to add the shell hook to `~/.zshrc`.** It prints the exact line first and waits for a `y`. It never edits the file without asking. See step 5.
+3. **Checks the ask engine.** Reports whether `claude` or `codex` is on your PATH, which is what makes plain-English questions work without an API key.
+4. **Prints what to try next**, naming your most recent session back to you.
 
 ```
   ◉ Setting up recall
@@ -169,6 +206,10 @@ That one command does everything:
   └ ✓ 1333 conversations indexed across 34 projects in 8.1s — searchable right now
 
   ┌ Shell recording  captures every command you run from now on
+  │   recall never edits ~/.zshrc without asking.
+  │   eval "$(/Users/you/.cargo/bin/recall init zsh)"
+  │   This also wraps new shells in `script` so command output is captured.
+  │   Append it to ~/.zshrc? [y/N] y
   └ ✓ added — every new terminal starts recording automatically
 
   ┌ Ask engine       lets you ask `recall "what broke yesterday"`
@@ -179,24 +220,98 @@ That one command does everything:
     recall agents resume            reopen your latest session:
                                     Fix flaky retry backoff test  claude · 2h ago
     recall agents search "..."      search every conversation you've had
-    recall                          browse everything in the TUI
+    recall                          browse and search everything in the TUI
     recall "what broke yesterday"   ask your history in plain English
 ```
 
-**Then open a new terminal** (or run `source ~/.zshrc`) so the hook loads, and run:
+Use `recall setup --yes` to accept the `~/.zshrc` edit without the prompt (useful in a dotfiles script).
+
+### 5. The `~/.zshrc` line, in full
+
+**This step is only for recording shell commands.** Searching and resuming agent sessions works without it — skip this whole step if that's all you want.
+
+When you answer `y` in step 4, recall appends exactly this to the end of `~/.zshrc`:
+
+```bash
+
+# recall — records shell history
+eval "$(/Users/you/.cargo/bin/recall init zsh)"
+```
+
+The path is absolute and points at whichever binary you ran `recall setup` with, so it keeps working regardless of your `PATH`.
+
+**To add it by hand instead**, open `~/.zshrc` in an editor and paste this at the end:
+
+```bash
+eval "$(~/.cargo/bin/recall init zsh)"
+```
+
+Or append it in one command:
+
+```bash
+echo 'eval "$(~/.cargo/bin/recall init zsh)"' >> ~/.zshrc
+```
+
+(Use single quotes exactly as written — the `$(...)` must reach the file unexpanded, so that it runs each time a shell starts.)
+
+**Either way, load it:**
+
+```bash
+source ~/.zshrc      # or just open a new terminal
+```
+
+**Verify it's recording.** Run any command, then ask recall about today:
+
+```bash
+echo hello
+recall today
+```
+
+If `echo hello` appears in the output, the hook is live.
+
+<details>
+<summary>What the hook actually does</summary>
+
+It registers zsh `preexec` and `precmd` hooks that record each command's text, exit code, duration, working directory and git branch. It also re-executes your shell under `script` so command *output* can be captured — which is what makes `recall search --failed` able to show you the error text, not just the command. That re-exec means a `/tmp` typescript file per shell, and `exit` may take two presses.
+
+Don't want output capture? Use `recall pause` to stop recording at any time, or leave the hook out entirely and use recall purely for agent sessions.
+
+</details>
+
+### 6. Start recall
 
 ```bash
 recall
 ```
 
-Re-running `recall setup` any time is safe — it doubles as a status screen, and it is how you clean up after an upgrade:
+Bare `recall` opens the TUI — that's the main way to use it. It indexes anything new before it opens, so a session you started a minute ago is already there.
 
-- **An older install still wired up in `~/.zshrc`** — a hook line or `alias recall=` pointing at a previous binary — is detected and offered up for repointing. Your previous `~/.zshrc` is saved as `~/.zshrc.recall-backup` first.
-- **An index built by an older version** is rebuilt automatically. Parsing rules change between releases, so an index carried over would otherwise keep returning text the current version would never produce.
+```bash
+recall                       # the TUI
+recall agents resume         # jump straight back into your latest session
+recall agents search "retry" # one-shot search, no TUI
+recall today                 # today's commands
+recall "what broke today"    # plain-English question
+```
 
-If you decline the `~/.zshrc` edit, setup prints the exact lines to change, how to reload, and how to start recall in the meantime — nothing is required for agent session search, which works without the hook.
+### Re-running setup
 
-> Shell recording only captures commands run *after* the hook is installed. Agent session search is retroactive and works on everything already on disk.
+`recall setup` is safe to re-run any time and doubles as a status screen. It's also how you clean up after an upgrade:
+
+- **An older install still wired into `~/.zshrc`** — a hook line or an `alias recall=` pointing at a previous binary — is detected and offered up for repointing. Your previous file is saved as `~/.zshrc.recall-backup` first.
+- **An index built by an older version** is rebuilt automatically, since parsing rules change between releases.
+
+If you decline the edit, setup prints the exact lines to change, whether `PATH` needs fixing, how to reload, and how to start recall meanwhile.
+
+### Troubleshooting
+
+**`zsh: command not found: recall`** — `~/.cargo/bin` isn't on your `PATH`. Do step 3, or use the full path `~/.cargo/bin/recall`.
+
+**Commands aren't being recorded** — the hook isn't loaded. Check with `grep recall ~/.zshrc`; if the line is there, run `source ~/.zshrc` or open a new terminal. Note that only commands run *after* the hook loads are recorded.
+
+**A new agent session doesn't appear** — press `Ctrl+R` in the TUI to rescan, or run `recall agents index`.
+
+**Two different recalls installed** — run `recall setup`; it detects a stale binary still wired into `~/.zshrc` and offers to repoint it.
 
 ### Building without installing
 
@@ -205,17 +320,19 @@ cargo build --release
 ./target/release/recall setup
 ```
 
-The hook line embeds the absolute path of whichever binary you ran `setup` with, so both approaches work.
+The hook line embeds the absolute path of whichever binary ran `setup`, so this works too — just don't also `cargo install`, or you'll have two copies.
 
 ### Uninstall
 
-Remove the `eval` line from `~/.zshrc` and restart your terminal. To delete all stored data:
-
 ```bash
+# 1. stop recording: delete the `eval "$(... recall init zsh)"` line from ~/.zshrc
+# 2. remove the binary
+cargo uninstall recall
+# 3. delete all stored data (optional)
 rm -rf ~/.recall
 ```
 
-Your Claude Code and Codex transcripts are never modified or copied — removing recall leaves them untouched.
+Your Claude Code and Codex transcripts are never modified or copied — removing recall leaves them exactly as they were.
 
 ---
 

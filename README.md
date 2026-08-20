@@ -233,6 +233,8 @@ recall agents resume 019ffe3f          # reopen it in Claude Code or Codex
 recall agents resume                   # or just reopen the most recent one
 ```
 
+Sessions you've named in Claude Code (`claude -n "<name>"`, or renaming one in the UI) show that name, marked with a `★`, in the list, the details pane and the CLI. Where you haven't named one, recall uses the title Claude Code generated for itself, and only falls back to the opening prompt when there is neither. Codex records no session name today; if it starts to, recall will pick it up.
+
 The index builds itself. `recall setup` seeds it, opening the TUI rescans, and every CLI search reconciles before answering — so a session you started a minute ago is already there. `Ctrl+R` inside the TUI rescans without leaving, and `recall agents index` exists if you want to run it by hand.
 
 Rescanning is cheap because it compares size and mtime first and only re-reads what changed. On ~1,300 indexed transcripts: **0.17s** when nothing changed, **0.22s** to pick up 20 edited sessions, **0.31s** to re-read a single 68 MB transcript from scratch.

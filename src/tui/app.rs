@@ -491,9 +491,6 @@ impl App {
             KeyCode::Char(c @ '1'..='4') => {
                 return self.select_tab(conn, c as usize - '1' as usize);
             }
-            KeyCode::Char(c @ '1'..='4') => {
-                return self.select_tab(conn, c as usize - '1' as usize);
-            }
             KeyCode::Char('/') => self.focus = Focus::Search,
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('r') => self.open_resume_dialog(),
@@ -1481,6 +1478,7 @@ mod tests {
             file_path: "/tmp/x.jsonl".into(),
             file_mtime: 0,
             file_size: 0,
+            custom_name: None,
         }
     }
 
@@ -1510,6 +1508,7 @@ mod tests {
                 file_path: "/tmp/x.jsonl".into(),
                 file_mtime: 0,
                 file_size: 0,
+                custom_name: None,
             },
             snippet: String::new(),
             rank: 0.0,

@@ -43,7 +43,7 @@ impl Filter {
 }
 
 const SESSION_COLUMNS: &str = "uid, source, session_id, project, title, started_at, \
-     last_activity, model, message_count, file_path, file_mtime, file_size";
+     last_activity, model, message_count, file_path, file_mtime, file_size, custom_name";
 
 fn session_from_row(row: &Row, offset: usize) -> rusqlite::Result<AiSession> {
     let source: String = row.get(offset + 1)?;
@@ -60,6 +60,7 @@ fn session_from_row(row: &Row, offset: usize) -> rusqlite::Result<AiSession> {
         file_path: row.get(offset + 9)?,
         file_mtime: row.get(offset + 10)?,
         file_size: row.get(offset + 11)?,
+        custom_name: row.get(offset + 12)?,
     })
 }
 
@@ -95,11 +96,12 @@ pub fn upsert_session(conn: &Connection, session: &AiSession, indexed_at: i64) -
     conn.execute(
         "INSERT INTO ai_sessions (uid, source, session_id, project, title, started_at,
                                   last_activity, model, message_count, file_path,
-                                  file_mtime, file_size, indexed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                  file_mtime, file_size, indexed_at, custom_name)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(uid) DO UPDATE SET
             project = excluded.project,
             title = excluded.title,
+            custom_name = excluded.custom_name,
             started_at = excluded.started_at,
             last_activity = excluded.last_activity,
             model = excluded.model,
@@ -122,6 +124,7 @@ pub fn upsert_session(conn: &Connection, session: &AiSession, indexed_at: i64) -
             session.file_mtime,
             session.file_size,
             indexed_at,
+            session.custom_name,
         ],
     )
     .context("Failed to upsert AI session")?;
@@ -262,8 +265,8 @@ pub fn search(conn: &Connection, query: &str, filter: &Filter) -> Result<Vec<AiS
     let rows = stmt.query_map(params_from_iter(values), |row| {
         Ok(AiSearchResult {
             session: session_from_row(row, 0)?,
-            snippet: row.get(12)?,
-            rank: row.get(13)?,
+            snippet: row.get(13)?,
+            rank: row.get(14)?,
         })
     })?;
 
@@ -313,7 +316,7 @@ pub fn search_fuzzy(conn: &Connection, query: &str, filter: &Filter) -> Result<V
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(values), |row| {
-        let text: String = row.get(12)?;
+        let text: String = row.get(13)?;
         Ok(AiSearchResult {
             session: session_from_row(row, 0)?,
             snippet: excerpt_around(&text, needle),
@@ -447,6 +450,7 @@ mod tests {
             file_path: format!("/tmp/{}.jsonl", id),
             file_mtime: activity,
             file_size: 128,
+            custom_name: None,
         }
     }
 
@@ -505,6 +509,28 @@ mod tests {
         let loaded = get_session(&conn, &session.uid).unwrap().unwrap();
         assert_eq!(loaded.message_count, 9);
         assert_eq!(loaded.last_activity, 5000);
+    }
+
+    #[test]
+    fn a_saved_name_round_trips_and_can_be_cleared() {
+        let conn = test_db();
+        let mut session = sample(Source::Claude, "abc", "/repos/one", 1000);
+        session.custom_name = Some("appliedIn".into());
+        session.title = Some("appliedIn".into());
+        upsert_session(&conn, &session, 1).unwrap();
+        assert_eq!(
+            get_session(&conn, &session.uid).unwrap().unwrap().custom_name.as_deref(),
+            Some("appliedIn")
+        );
+
+        // Renaming it away in the tool must clear the stored name too.
+        session.custom_name = None;
+        session.title = Some("the opening prompt".into());
+        upsert_session(&conn, &session, 2).unwrap();
+
+        let reloaded = get_session(&conn, &session.uid).unwrap().unwrap();
+        assert_eq!(reloaded.custom_name, None, "the old name does not linger");
+        assert_eq!(reloaded.title.as_deref(), Some("the opening prompt"));
     }
 
     #[test]

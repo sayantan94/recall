@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::ai::models::{session_uid, AiSession, Message, Role, Source};
-use crate::ai::sources::SessionSource;
+use crate::ai::sources::{Conversation, SessionSource};
 use crate::ai::{parse_rfc3339_millis, sessions_dir_codex};
 
 pub struct CodexSource {
@@ -198,6 +198,7 @@ impl SessionSource for CodexSource {
                 session_id,
                 project: cwd.unwrap_or_else(|| "unknown".to_string()),
                 title,
+                custom_name: None,
                 started_at,
                 last_activity: file_mtime.max(started_at),
                 model,
@@ -211,7 +212,8 @@ impl SessionSource for CodexSource {
         Ok(sessions)
     }
 
-    fn load_messages(&self, session: &AiSession) -> Result<Vec<Message>> {
+    /// Codex records no session name of its own, so only messages come back.
+    fn load_conversation(&self, session: &AiSession) -> Result<Conversation> {
         let file = fs::File::open(&session.file_path)
             .with_context(|| format!("Failed to open {}", session.file_path))?;
         let mut messages = Vec::new();
@@ -262,7 +264,10 @@ impl SessionSource for CodexSource {
             });
         }
 
-        Ok(messages)
+        Ok(Conversation {
+            messages,
+            ..Default::default()
+        })
     }
 }
 

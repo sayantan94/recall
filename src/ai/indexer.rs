@@ -19,7 +19,7 @@ use super::store;
 /// left holding text this build would never produce — for example the injected
 /// Codex context and recall's own headless prompts, which earlier versions
 /// indexed and this one filters out.
-pub const INDEX_FORMAT: u32 = 2;
+pub const INDEX_FORMAT: u32 = 3;
 
 const INDEX_FORMAT_KEY: &str = "index_format";
 
@@ -107,15 +107,16 @@ pub fn index_source(conn: &Connection, source: Source, force: bool) -> Result<In
             }
         }
 
-        let messages = match handler.load_messages(&session) {
-            Ok(messages) => messages,
+        let conversation = match handler.load_conversation(&session) {
+            Ok(conversation) => conversation,
             Err(error) => {
                 report.failed.push((session.file_path.clone(), error.to_string()));
                 continue;
             }
         };
+        let messages = &conversation.messages;
 
-        if is_recall_generated(&messages) {
+        if is_recall_generated(messages) {
             // recall's own headless runs are not conversations worth finding.
             // Delete rather than skip, so transcripts recorded before recall
             // started passing --no-session-persistence get cleaned out too.
@@ -126,8 +127,8 @@ pub fn index_source(conn: &Connection, source: Source, force: bool) -> Result<In
             continue;
         }
 
-        enrich(&mut session, &messages);
-        let chunks = chunk_session(&session, &messages);
+        enrich(&mut session, &conversation);
+        let chunks = chunk_session(&session, messages);
 
         store::upsert_session(conn, &session, indexed_at)?;
         store::delete_chunks(conn, &session.uid)?;
@@ -163,8 +164,12 @@ fn is_recall_generated(messages: &[super::models::Message]) -> bool {
 }
 
 /// Fill in what only a full parse can tell us: how many messages the session
-/// holds, when it was last active, and a title when the tool didn't record one.
-fn enrich(session: &mut AiSession, messages: &[super::models::Message]) {
+/// holds, when it was last active, and what to call it.
+///
+/// A name the user saved themselves outranks anything generated, which in turn
+/// outranks falling back to the opening prompt.
+fn enrich(session: &mut AiSession, conversation: &super::sources::Conversation) {
+    let messages = &conversation.messages;
     session.message_count = messages.len();
 
     if let Some(ts) = messages.iter().rev().find_map(|m| m.timestamp) {
@@ -174,12 +179,18 @@ fn enrich(session: &mut AiSession, messages: &[super::models::Message]) {
         session.started_at = ts;
     }
 
-    if session.title.as_ref().is_none_or(|t| t.trim().is_empty()) {
-        session.title = messages
-            .iter()
-            .find(|m| m.role == super::models::Role::User)
-            .map(|m| first_line_summary(&m.text));
-    }
+    session.custom_name = conversation.custom_name.clone();
+    session.title = conversation
+        .custom_name
+        .clone()
+        .or_else(|| conversation.generated_title.clone())
+        .or_else(|| session.title.clone().filter(|t| !t.trim().is_empty()))
+        .or_else(|| {
+            messages
+                .iter()
+                .find(|m| m.role == super::models::Role::User)
+                .map(|m| first_line_summary(&m.text))
+        });
 }
 
 /// A one-line title taken from the opening prompt.
@@ -232,17 +243,27 @@ mod tests {
             file_path: "/tmp/s1.jsonl".into(),
             file_mtime: 500,
             file_size: 10,
+            custom_name: None,
+        }
+    }
+
+    fn convo(messages: Vec<Message>) -> super::super::sources::Conversation {
+        super::super::sources::Conversation {
+            messages,
+            ..Default::default()
         }
     }
 
     #[test]
     fn enrich_counts_messages_and_extends_activity() {
         let mut s = session();
-        let messages = vec![
-            msg(Role::User, "first", Some(1000)),
-            msg(Role::Assistant, "reply", Some(2000)),
-        ];
-        enrich(&mut s, &messages);
+        enrich(
+            &mut s,
+            &convo(vec![
+                msg(Role::User, "first", Some(1000)),
+                msg(Role::Assistant, "reply", Some(2000)),
+            ]),
+        );
         assert_eq!(s.message_count, 2);
         assert_eq!(s.started_at, 1000);
         assert_eq!(s.last_activity, 2000);
@@ -251,24 +272,53 @@ mod tests {
     #[test]
     fn enrich_titles_from_the_first_user_message() {
         let mut s = session();
-        let messages = vec![msg(Role::User, "\n  fix the parser\nmore detail", None)];
-        enrich(&mut s, &messages);
+        enrich(
+            &mut s,
+            &convo(vec![msg(Role::User, "\n  fix the parser\nmore detail", None)]),
+        );
         assert_eq!(s.title.as_deref(), Some("fix the parser"));
+        assert_eq!(s.custom_name, None);
     }
 
     #[test]
-    fn enrich_keeps_an_existing_title() {
+    fn a_saved_name_outranks_everything_else() {
         let mut s = session();
-        s.title = Some("tool supplied".into());
-        enrich(&mut s, &[msg(Role::User, "something else", None)]);
-        assert_eq!(s.title.as_deref(), Some("tool supplied"));
+        let mut c = convo(vec![msg(Role::User, "the opening prompt", None)]);
+        c.generated_title = Some("A Generated Title".into());
+        c.custom_name = Some("appliedIn".into());
+
+        enrich(&mut s, &c);
+        assert_eq!(s.custom_name.as_deref(), Some("appliedIn"));
+        assert_eq!(s.title.as_deref(), Some("appliedIn"));
+    }
+
+    #[test]
+    fn a_generated_title_is_used_when_nothing_was_saved() {
+        let mut s = session();
+        let mut c = convo(vec![msg(Role::User, "the opening prompt", None)]);
+        c.generated_title = Some("Where did we leave off".into());
+
+        enrich(&mut s, &c);
+        assert_eq!(s.custom_name, None);
+        assert_eq!(s.title.as_deref(), Some("Where did we leave off"));
+    }
+
+    #[test]
+    fn clearing_a_saved_name_clears_it_on_the_session() {
+        let mut s = session();
+        s.custom_name = Some("stale".into());
+
+        // enrich always runs against a freshly listed session, so a name that
+        // is gone from the transcript must not survive into the new record.
+        enrich(&mut s, &convo(vec![msg(Role::User, "opening prompt", None)]));
+        assert_eq!(s.custom_name, None);
     }
 
     #[test]
     fn enrich_never_moves_activity_backwards() {
         let mut s = session();
         s.last_activity = 9000;
-        enrich(&mut s, &[msg(Role::User, "old", Some(1000))]);
+        enrich(&mut s, &convo(vec![msg(Role::User, "old", Some(1000))]));
         assert_eq!(s.last_activity, 9000);
     }
 

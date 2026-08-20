@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::ai::models::{session_uid, AiSession, Message, Role, Source};
-use crate::ai::sources::SessionSource;
+use crate::ai::sources::{Conversation, SessionSource};
 use crate::ai::{parse_rfc3339_millis, projects_dir_claude};
 
 pub struct ClaudeCodeSource {
@@ -26,9 +26,14 @@ struct RawEntry {
     #[serde(rename = "type")]
     entry_type: Option<String>,
     cwd: Option<String>,
-    slug: Option<String>,
     timestamp: Option<String>,
     message: Option<RawMessage>,
+    /// Set on `custom-title` lines: the name the user saved for the session.
+    #[serde(rename = "customTitle")]
+    custom_title: Option<String>,
+    /// Set on `ai-title` lines: the title Claude Code generated.
+    #[serde(rename = "aiTitle")]
+    ai_title: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -234,7 +239,6 @@ impl SessionSource for ClaudeCodeSource {
             let file = fs::File::open(&file_path)?;
             let mut started_at = None;
             let mut model = None;
-            let mut title = None;
             let mut cwd = None;
 
             for line in BufReader::new(file).lines().take(10) {
@@ -257,9 +261,6 @@ impl SessionSource for ClaudeCodeSource {
                 if cwd.is_none() {
                     cwd = entry.cwd.clone();
                 }
-                if title.is_none() {
-                    title = entry.slug.clone();
-                }
                 if model.is_none() {
                     model = entry.message.as_ref().and_then(|m| m.model.clone());
                 }
@@ -272,7 +273,10 @@ impl SessionSource for ClaudeCodeSource {
                 source: Source::Claude,
                 session_id,
                 project: cwd.unwrap_or(project),
-                title,
+                // Titles come from the full parse: the cheap metadata pass
+                // cannot see rename lines, which are appended anywhere.
+                title: None,
+                custom_name: None,
                 started_at,
                 last_activity: file_mtime.max(started_at),
                 model,
@@ -286,10 +290,10 @@ impl SessionSource for ClaudeCodeSource {
         Ok(sessions)
     }
 
-    fn load_messages(&self, session: &AiSession) -> Result<Vec<Message>> {
+    fn load_conversation(&self, session: &AiSession) -> Result<Conversation> {
         let file = fs::File::open(&session.file_path)
             .with_context(|| format!("Failed to open {}", session.file_path))?;
-        let mut messages = Vec::new();
+        let mut conversation = Conversation::default();
 
         for line in BufReader::new(file).lines() {
             let line = line?;
@@ -301,6 +305,21 @@ impl SessionSource for ClaudeCodeSource {
                 Ok(e) => e,
                 Err(_) => continue,
             };
+
+            // Renames are appended, so the last one recorded wins.
+            match entry.entry_type.as_deref() {
+                Some("custom-title") => {
+                    conversation.custom_name =
+                        entry.custom_title.filter(|name| !name.trim().is_empty());
+                    continue;
+                }
+                Some("ai-title") => {
+                    conversation.generated_title =
+                        entry.ai_title.filter(|title| !title.trim().is_empty());
+                    continue;
+                }
+                _ => {}
+            }
 
             let role = match entry.entry_type.as_deref() {
                 Some("user") => Role::User,
@@ -318,7 +337,7 @@ impl SessionSource for ClaudeCodeSource {
                 continue;
             }
 
-            messages.push(Message {
+            conversation.messages.push(Message {
                 role,
                 text,
                 timestamp: entry.timestamp.as_deref().and_then(parse_rfc3339_millis),
@@ -326,7 +345,7 @@ impl SessionSource for ClaudeCodeSource {
             });
         }
 
-        Ok(messages)
+        Ok(conversation)
     }
 }
 

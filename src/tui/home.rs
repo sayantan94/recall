@@ -238,8 +238,8 @@ fn item_row(
     terms: &[String],
 ) -> ListItem<'static> {
     let kind = entry.kind();
-    // edges(2) + tag(8) + failure(1) + time(8) + pane borders(2)
-    let title_width = width.saturating_sub(21).max(8);
+    // edges(2) + tag(8) + star(2) + failure(1) + time(8) + pane borders(2)
+    let title_width = width.saturating_sub(23).max(8);
 
     let row = row_style(selected, pane_focused);
     let title = truncate(&entry.title(), title_width);
@@ -250,11 +250,18 @@ fn item_row(
         Style::default().fg(TEXT)
     };
 
+    // A session the user named themselves is worth calling out.
+    let named = matches!(entry, Entry::Agent { session, .. } if session.custom_name.is_some());
+
     let mut spans = vec![
         edge(selected, EDGE_LEFT),
         Span::styled(
             format!(" {:<7}", kind.tag()),
             Style::default().fg(kind.color()),
+        ),
+        Span::styled(
+            if named { "★ " } else { "  " },
+            Style::default().fg(ACCENT),
         ),
     ];
     spans.extend(highlight(&title, terms, title_style));
@@ -341,7 +348,8 @@ fn render_details(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(block, area);
 
     let searching = !app.input.trim().is_empty();
-    let header_height = if searching { 8 } else { 6 };
+    let named = matches!(entry, Entry::Agent { session, .. } if session.custom_name.is_some());
+    let header_height = 6 + u16::from(searching) * 2 + u16::from(named);
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -467,8 +475,23 @@ fn detail_fields(app: &App, entry: &Entry) -> Vec<Line<'static>> {
     let kind = entry.kind();
 
     match entry {
-        Entry::Agent { session, .. } => vec![
-            field("Source", kind.label().to_string(), kind.color()),
+        Entry::Agent { session, .. } => {
+            let mut lines = vec![field("Source", kind.label().to_string(), kind.color())];
+
+            // Show the saved name in its own right, so the conversation's own
+            // opening line is still visible underneath it.
+            if let Some(name) = &session.custom_name {
+                lines.push(Line::from(vec![
+                    Span::styled(" Name:      ", Style::default().fg(DIM)),
+                    Span::styled("★ ", Style::default().fg(ACCENT)),
+                    Span::styled(
+                        truncate(&name.replace('\n', " "), 60),
+                        Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+
+            lines.extend(vec![
             field("Session", session.session_id.clone(), TEXT),
             field("Project", truncate(&session.project, 70), TEXT),
             field(
@@ -491,7 +514,9 @@ fn detail_fields(app: &App, entry: &Entry) -> Vec<Line<'static>> {
                 Span::styled("Enter", Style::default().fg(ACCENT)),
                 Span::styled(" to resume", Style::default().fg(DIM)),
             ]),
-        ],
+            ]);
+            lines
+        }
         Entry::Shell {
             session,
             command_count,

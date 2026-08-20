@@ -153,6 +153,7 @@ mod tests {
             file_path: "/tmp/test.jsonl".into(),
             file_mtime: 0,
             file_size: 0,
+            custom_name: None,
         }
     }
 

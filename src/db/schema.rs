@@ -181,6 +181,15 @@ fn initialize_ai_tables(conn: &Connection) -> Result<()> {
     )
     .context("Failed to create AI session tables")?;
 
+    // Migrate: databases created before saved names lack this column.
+    let has_custom_name: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('ai_sessions') WHERE name='custom_name'")?
+        .exists([])?;
+    if !has_custom_name {
+        conn.execute_batch("ALTER TABLE ai_sessions ADD COLUMN custom_name TEXT;")
+            .context("Failed to add custom_name column")?;
+    }
+
     let has_ai_chunks_fts: bool = conn
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_chunks_fts'")?
         .exists([])?;

@@ -198,6 +198,9 @@ fn handle_show(conn: &Connection, reference: &str) -> Result<()> {
         "◉".cyan(),
         session.title.as_deref().unwrap_or("(untitled session)").bold()
     );
+    if let Some(name) = &session.custom_name {
+        println!("  {} {}", "★".cyan(), format!("saved as \"{}\"", name).cyan());
+    }
     println!(
         "  {}  {}  {}",
         session.source.label().magenta(),
@@ -354,10 +357,15 @@ fn print_session_line(session: &AiSession) {
         .unwrap_or(&session.project);
 
     println!(
-        "\n  {} {}  {:<7} {}",
+        "\n  {} {}  {:<7} {}{}",
         "┌".dimmed(),
         format_time(session.last_activity).white().bold(),
         session.source.as_str().magenta(),
+        if session.custom_name.is_some() {
+            "★ ".cyan().to_string()
+        } else {
+            String::new()
+        },
         title.white()
     );
     println!(

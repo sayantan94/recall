@@ -44,7 +44,12 @@ pub struct AiSession {
     pub session_id: String,
     /// Absolute directory the session belongs to (drives grouping and resume cwd).
     pub project: String,
+    /// Display title: the saved name when there is one, else a generated title,
+    /// else the opening prompt.
     pub title: Option<String>,
+    /// A name the user saved for this session in the tool itself. Claude Code
+    /// records these; Codex has no equivalent today.
+    pub custom_name: Option<String>,
     /// Milliseconds since epoch, matching the rest of recall's timestamps.
     pub started_at: i64,
     pub last_activity: i64,

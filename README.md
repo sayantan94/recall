@@ -13,6 +13,7 @@
   <img src="https://img.shields.io/badge/LLM-Claude-blueviolet" alt="Claude">
   <img src="https://img.shields.io/badge/AWS-Bedrock-FF9900?logo=amazonaws" alt="Bedrock">
   <img src="https://img.shields.io/badge/sessions-Claude%20Code%20%7C%20Codex-8A2BE2" alt="AI sessions">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License">
 </p>
 
 Your terminal work lives in two places now: the commands you type, and the conversations you have with an AI coding agent. recall indexes both, locally, in one searchable place.
@@ -139,7 +140,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ### 2. Install recall
 
 ```bash
-git clone <this repo> && cd recall
+git clone https://github.com/sayantan94/recall.git && cd recall
 cargo install --path .
 ```
 
@@ -423,3 +424,6 @@ sqlite3 ~/.recall/recall.db "SELECT source, COUNT(*) FROM ai_sessions GROUP BY s
 rm ~/.recall/recall.db
 ```
 
+## License
+
+[MIT](LICENSE) © Sayantan Bhowmik
